@@ -56,6 +56,21 @@ bash install.sh                       # sets up the background agents for your u
 
 Install options: `install.sh --scan` (scheduled only) or `install.sh --watch` (watcher only).
 
+## Where it shows up after installing
+
+Bastion is a **menu-bar app** — it has **no Dock icon and no app window**. After you
+launch it (from Applications, or it auto-starts at login once the scheduled agent is on),
+look at the **top-right of your macOS menu bar** for a **shield icon**:
+
+- 🛡️ **green shield** = clean / protected
+- 🛡️ **orange shield** = a threat was found
+
+**Click the shield** to open the control panel (status, Scan Now, and the watcher /
+scheduled-scan toggles). If you don't see it, the menu bar may be full — widen it by
+removing another icon, or relaunch from `~/Applications/Bastion.app`.
+
+To confirm it's running from a terminal: `pgrep -x Bastion`.
+
 ## Uninstall
 
 ```bash
