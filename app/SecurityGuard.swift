@@ -53,8 +53,8 @@ final class GuardModel: ObservableObject {
         let qc = sh("find '\(dir)/quarantine' -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l").trimmingCharacters(in: .whitespacesAndNewlines)
         quarantineCount = Int(qc) ?? 0
         loadQuarantine()
-        watcherOn = sh("launchctl list 2>/dev/null | grep -c securityguard.watcher").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
-        scheduleOn = sh("launchctl list 2>/dev/null | grep securityguard | grep -vc watcher").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
+        watcherOn = sh("launchctl list 2>/dev/null | grep -c io.anshuman.bastion.watcher").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
+        scheduleOn = sh("launchctl list 2>/dev/null | grep -c io.anshuman.bastion.scan").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
     }
 
     func computeStats() {
@@ -105,12 +105,12 @@ final class GuardModel: ObservableObject {
 
     func toggleWatcher(_ on: Bool) {
         if on { sh("bash '\(dir)/install.sh' --watch") }
-        else { sh("launchctl unload ~/Library/LaunchAgents/com.\(user).securityguard.watcher.plist 2>/dev/null; rm -f ~/Library/LaunchAgents/com.\(user).securityguard.watcher.plist") }
+        else { sh("launchctl unload ~/Library/LaunchAgents/io.anshuman.bastion.watcher.plist 2>/dev/null; rm -f ~/Library/LaunchAgents/io.anshuman.bastion.watcher.plist") }
         refresh()
     }
     func toggleSchedule(_ on: Bool) {
         if on { sh("bash '\(dir)/install.sh' --scan") }
-        else { sh("launchctl unload ~/Library/LaunchAgents/com.\(user).securityguard.plist 2>/dev/null; rm -f ~/Library/LaunchAgents/com.\(user).securityguard.plist") }
+        else { sh("launchctl unload ~/Library/LaunchAgents/io.anshuman.bastion.scan.plist 2>/dev/null; rm -f ~/Library/LaunchAgents/io.anshuman.bastion.scan.plist") }
         refresh()
     }
     func installGitGuard() {

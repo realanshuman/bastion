@@ -45,6 +45,56 @@ catches new variants that signature scanners miss.
   straight from the panel.
 - **Live stats** — repos and config files under watch, at a glance.
 
+## Menu-bar panel reference
+
+Click the shield in the menu bar to open the panel. Every element:
+
+### Menu-bar icon
+- 🛡️ **green shield** — clean / protected.
+- 🛡️ **orange shield** — a threat was found; open the panel to see it.
+
+### Header
+- **Bastion vX.Y** — app name and version.
+- **PROTECTED / N ALERTS pill** (top-right) — overall state; the number is how many
+  findings are in the activity log.
+
+### Status card (hero)
+- Large line — **"No threats detected"** or **"Threats need attention"**.
+- Subtitle — **when the last scan ran** and its result (CLEAN, or the finding count).
+
+### Stat tiles
+- **Repos** — git repositories under your home folder that Bastion watches.
+- **Configs** — build-config files (`*.config.*`, `vite/next/postcss…`) being checked.
+- **Quarantine** — how many contained artifacts are held (orange if any).
+
+### Scan Now
+- **Scan Now** — runs a full scan right now; the shield/status update when it finishes.
+- **Git repos only (faster)** checkbox — limits the scan to git repos instead of the
+  whole home folder, for a quicker pass.
+
+### Tabs
+**Overview**
+- **Real-time watcher** toggle — turns the ~15s background watch on/off (catches `/tmp`
+  staging dirs, beacons, hidden `~/.node_module`, a loader process, or a C2 connection).
+- **Scheduled scan (6h + login)** toggle — turns the periodic deep scan on/off.
+- **Protect N repos (block infected commits)** — installs the git pre-push guard into any
+  repo that doesn't have it yet. Shows **"All git repos protected"** once done.
+
+**Activity**
+- A scrollable log of every detection/quarantine event, newest first (text is selectable).
+  Empty state: **"No activity — all clear."**
+
+**Quarantine**
+- Each contained artifact with the time it was caught, plus a **Reveal** button that opens
+  it in Finder. Empty state: **"Nothing quarantined."**
+
+### Footer
+- **Logs** — opens the scan-log folder in Finder.
+- **GitHub** — opens the project repository.
+- **Refresh** — re-reads status, stats, and history now.
+- **Quit** — quits the menu-bar app. (This does **not** stop the background watcher or
+  scheduled scan — those are separate agents; turn them off with the toggles.)
+
 ## Why "structural" detection
 
 The payload changes its campaign marker each run — `global.i='1-project'`, `'1-183'`,

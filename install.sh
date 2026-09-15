@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# install.sh — set up Security Guard for the CURRENT user on THIS Mac.
-# Portable: generates launchd plists for whoever runs it (no hardcoded username).
-# Usage:  bash install.sh            # scheduled scan + live watcher
-#         bash install.sh --scan     # scheduled 6h scan only
-#         bash install.sh --watch    # live watcher only
+# install.sh — set up Bastion background agents for the current user (fixed labels).
+# Usage:  install.sh            # scheduled scan + live watcher
+#         install.sh --scan     # scheduled 6h scan only
+#         install.sh --watch    # live watcher only
 set -uo pipefail
 DEST="$HOME/.security-guard"
 SELF="$(cd "$(dirname "$0")" && pwd)"
 LA="$HOME/Library/LaunchAgents"
+SCAN_LABEL="io.anshuman.bastion.scan"
+WATCH_LABEL="io.anshuman.bastion.watcher"
 mkdir -p "$DEST/logs" "$DEST/quarantine" "$LA"
 
-# copy scripts here if installing from a different folder (e.g. a downloaded copy)
 if [ "$SELF" != "$DEST" ]; then
   for f in scanner.sh guard.sh watcher.sh git-guard README.md; do
     [ -f "$SELF/$f" ] && cp "$SELF/$f" "$DEST/$f"
@@ -21,15 +21,15 @@ fi
 want_scan=1; want_watch=1
 case "${1:-}" in --scan) want_watch=0;; --watch) want_scan=0;; esac
 
-gen_plist(){ # $1 label-suffix, $2 script, $3 extra-dict-xml
-  cat > "$LA/com.$(id -un).securityguard$1.plist" <<PL
+plist(){ # $1 label, $2 script, $3 extra-keys, $4 extra-args
+  cat > "$LA/$1.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.$(id -un).securityguard$1</string>
+  <key>Label</key><string>$1</string>
   <key>ProgramArguments</key><array><string>/bin/bash</string><string>$DEST/$2</string>$4</array>
-  <key>StandardOutPath</key><string>$DEST/logs/launchd$1.out</string>
-  <key>StandardErrorPath</key><string>$DEST/logs/launchd$1.err</string>
+  <key>StandardOutPath</key><string>$DEST/logs/$1.out</string>
+  <key>StandardErrorPath</key><string>$DEST/logs/$1.err</string>
   <key>ProcessType</key><string>Background</string><key>LowPriorityIO</key><true/><key>Nice</key><integer>10</integer>
 $3
 </dict></plist>
@@ -38,16 +38,15 @@ PL
 
 loaded=""
 if [ "$want_scan" = 1 ]; then
-  gen_plist "" "guard.sh" "  <key>RunAtLoad</key><true/>
+  plist "$SCAN_LABEL" "guard.sh" "  <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>21600</integer>" "<string>$HOME</string>"
-  launchctl unload "$LA/com.$(id -un).securityguard.plist" 2>/dev/null || true
-  launchctl load "$LA/com.$(id -un).securityguard.plist" && loaded="$loaded scheduled-scan"
+  launchctl unload "$LA/$SCAN_LABEL.plist" 2>/dev/null || true
+  launchctl load "$LA/$SCAN_LABEL.plist" && loaded="$loaded scheduled-scan"
 fi
 if [ "$want_watch" = 1 ]; then
-  gen_plist ".watcher" "watcher.sh" "  <key>RunAtLoad</key><true/>
+  plist "$WATCH_LABEL" "watcher.sh" "  <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>10</integer>" ""
-  launchctl unload "$LA/com.$(id -un).securityguard.watcher.plist" 2>/dev/null || true
-  launchctl load "$LA/com.$(id -un).securityguard.watcher.plist" && loaded="$loaded live-watcher"
+  launchctl unload "$LA/$WATCH_LABEL.plist" 2>/dev/null || true
+  launchctl load "$LA/$WATCH_LABEL.plist" && loaded="$loaded live-watcher"
 fi
-echo "Security Guard installed for $(id -un). Active:$loaded"
-echo "Tool dir: $DEST   |   Uninstall: bash $DEST/uninstall.sh"
+echo "Bastion agents active:$loaded"
