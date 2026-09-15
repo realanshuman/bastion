@@ -4,157 +4,132 @@
 
 # Bastion
 
-**Supply-chain injection guard for macOS**
+**A tiny macOS app that guards your dev machine from sneaky, hidden malware in code config files.**
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-6-orange)
 ![UI](https://img.shields.io/badge/UI-SwiftUI%20MenuBarExtra-purple)
-![Scope](https://img.shields.io/badge/scope-targeted%20guard-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
-
-A native menu-bar app that watches for the config-injection supply-chain payload
-family — the obfuscated loader that hides in `postcss.config.*` / `orval.config.*`,
-stages stolen data in `/tmp`, and beacons to a C2. Detects **structurally**, so it
-catches new variants that signature scanners miss.
 
 <img src="assets/panel-preview.png" width="340" alt="Bastion panel"/>
 
 </div>
 
+## What is this?
+
+Bastion lives in your **menu bar** (the strip at the top-right of your Mac). It quietly
+watches for a nasty kind of attack that has been hitting developers: someone hides malware
+inside an innocent-looking build file (like `postcss.config.js`), and it runs the moment you
+type `npm run dev` or `npm test`. It steals passwords, tokens, and browser data, then phones
+home — all without you noticing.
+
+Bastion catches that. Green shield = you're safe. Orange shield = something's wrong, come look.
+
+## The problem, in plain terms
+
+- A teammate's laptop or account gets compromised.
+- Their commits secretly add a few hidden lines to a config file in your shared repo.
+- You pull the code and run it — the hidden code runs on **your** machine and steals your stuff.
+- Regular antivirus misses it, because the attackers change the code slightly every time.
+
+Bastion doesn't chase the exact code — it notices the **shape** of the trick (a config file
+that suddenly has weird `require` calls, a giant one-line blob, or code hidden behind a wall
+of spaces). That way it catches new variants too.
+
 ## What it does
 
-- **Real-time watcher** — every ~15s, catches runtime artifacts the moment they appear:
-  `/tmp` staging dirs, beacons, harvested loot, hidden `~/.node_module` trees, a live
-  loader process, or a connection to the known C2.
-- **Scheduled deep scan** — at login + every 6h, walks every build-config file across
-  your repos for the injection payload.
-- **Auto-quarantine** — moves unambiguous artifacts (never legitimate) to a quarantine
-  folder. **Never edits your repo files** — those are alert-only, so uncommitted work is safe.
-- **git-guard** — blocks committing or pushing an infected config file.
-- **Menu-bar UI** — shield icon (green = clean, orange = threat) with a click-down panel
-  for status, Scan Now, and toggles.
+- **Watches in real time** — every ~15 seconds it checks for the tell-tale signs: hidden
+  staging folders in `/tmp`, sneaky hidden dependency folders, a malicious process running,
+  or a connection to a known bad server.
+- **Deep scan** — on login and every 6 hours, it reads all your build-config files and flags
+  anything that looks injected.
+- **Quarantines automatically** — if it finds obvious malware junk, it moves it somewhere safe
+  (it never deletes your own code — it only warns you about that, so nothing you wrote is lost).
+- **Blocks bad commits** — an optional git hook stops you from committing or pushing an
+  infected config file by accident.
 
-## New in 2.0
+## The menu-bar panel, button by button
 
-- **Redesigned panel** — hero status card, live stat tiles (repos / configs / quarantine),
-  and a segmented **Overview · Activity · Quarantine** view.
-- **In-app quarantine viewer** — see every contained artifact with a Reveal-in-Finder action.
-- **Activity log** — the full threat/quarantine history, in the panel.
-- **Scan scope selector** — full-home scan, or "Git repos only" for a fast pass.
-- **One-click git-guard install** — protect every unprotected repo (blocks infected commits)
-  straight from the panel.
-- **Live stats** — repos and config files under watch, at a glance.
+Click the shield in the menu bar to open it.
 
-## Menu-bar panel reference
+**Top row**
+- **Shield icon + "Bastion"** — the app, and its version.
+- **PROTECTED / N ALERTS** — quick status. A number means that many things need your attention.
 
-Click the shield in the menu bar to open the panel. Every element:
+**Status card** — big line tells you if you're clean or not, and when the last scan ran.
 
-### Menu-bar icon
-- 🛡️ **green shield** — clean / protected.
-- 🛡️ **orange shield** — a threat was found; open the panel to see it.
+**Three tiles**
+- **Repos** — how many code projects Bastion is watching.
+- **Configs** — how many build-config files it checks.
+- **Quarantine** — how many suspicious items it has locked away (0 is good).
 
-### Header
-- **Bastion vX.Y** — app name and version.
-- **PROTECTED / N ALERTS pill** (top-right) — overall state; the number is how many
-  findings are in the activity log.
+**Scan Now** — runs a full check right now. Tick **"Git repos only (faster)"** to check just
+your code projects for a quicker scan.
 
-### Status card (hero)
-- Large line — **"No threats detected"** or **"Threats need attention"**.
-- Subtitle — **when the last scan ran** and its result (CLEAN, or the finding count).
+**Tabs**
+- **Overview** — the on/off switches:
+  - **Real-time watcher** — the always-on 15-second guard.
+  - **Scheduled scan** — the every-6-hours + login deep scan.
+  - **Protect N repos** — one click adds the "block bad commits" hook to your projects.
+- **Activity** — a running list of everything Bastion has caught or done.
+- **Quarantine** — the suspicious items it locked away, each with a **Reveal** button to see it
+  in Finder.
 
-### Stat tiles
-- **Repos** — git repositories under your home folder that Bastion watches.
-- **Configs** — build-config files (`*.config.*`, `vite/next/postcss…`) being checked.
-- **Quarantine** — how many contained artifacts are held (orange if any).
+**Bottom row**
+- **Logs** — open the scan history folder. **GitHub** — the project page.
+  **Refresh** — update the numbers now. **Quit** — close the app.
+  (Quitting the app does **not** turn off protection — the watcher and scan run on their own.
+  Use the switches to actually turn them off.)
 
-### Scan Now
-- **Scan Now** — runs a full scan right now; the shield/status update when it finishes.
-- **Git repos only (faster)** checkbox — limits the scan to git repos instead of the
-  whole home folder, for a quicker pass.
+## Where does it show up?
 
-### Tabs
-**Overview**
-- **Real-time watcher** toggle — turns the ~15s background watch on/off (catches `/tmp`
-  staging dirs, beacons, hidden `~/.node_module`, a loader process, or a C2 connection).
-- **Scheduled scan (6h + login)** toggle — turns the periodic deep scan on/off.
-- **Protect N repos (block infected commits)** — installs the git pre-push guard into any
-  repo that doesn't have it yet. Shows **"All git repos protected"** once done.
+Bastion has **no Dock icon and no window** — it's a menu-bar app. After you open it, look at
+the **top-right of your menu bar** for the shield:
 
-**Activity**
-- A scrollable log of every detection/quarantine event, newest first (text is selectable).
-  Empty state: **"No activity — all clear."**
+- green shield = clean
+- orange shield = a threat was found — click it
 
-**Quarantine**
-- Each contained artifact with the time it was caught, plus a **Reveal** button that opens
-  it in Finder. Empty state: **"Nothing quarantined."**
-
-### Footer
-- **Logs** — opens the scan-log folder in Finder.
-- **GitHub** — opens the project repository.
-- **Refresh** — re-reads status, stats, and history now.
-- **Quit** — quits the menu-bar app. (This does **not** stop the background watcher or
-  scheduled scan — those are separate agents; turn them off with the toggles.)
-
-## Why "structural" detection
-
-The payload changes its campaign marker each run — `global.i='1-project'`, `'1-183'`,
-`global.o='1-71'`, ... A string-matching scanner misses the next variant. Bastion flags
-the *shape* instead: a `createRequire` in a config file, a single line over 500 chars,
-code hidden behind a wall of whitespace, the `global.X='N-...'` pattern. Those don't occur
-in legitimate config files, whatever marker the attacker picks.
+Can't see it? The menu bar might be full; remove another icon, or reopen it from
+`~/Applications/Bastion.app`.
 
 ## Install
 
-**From the DMG** — open `Bastion.dmg`, drag Bastion to Applications, launch. (First open:
-right-click -> Open, since it's self-signed, not notarized.)
+**Easy way:** download **Bastion.dmg** from
+[Releases](https://github.com/realanshuman/bastion/releases), open it, drag Bastion into
+Applications, and launch it. First time, right-click the app → **Open** (it's self-signed).
 
 **From source:**
 ```bash
 git clone https://github.com/realanshuman/bastion.git
-cd bastion && bash build.sh          # builds Bastion.app + Bastion.dmg
-bash install.sh                       # sets up the background agents for your user
+cd bastion && bash build.sh     # builds the app + a .dmg
+bash install.sh                  # turns on the background protection
 ```
+Only want one part? `install.sh --scan` (deep scan only) or `install.sh --watch` (watcher only).
 
-Install options: `install.sh --scan` (scheduled only) or `install.sh --watch` (watcher only).
-
-## Where it shows up after installing
-
-Bastion is a **menu-bar app** — it has **no Dock icon and no app window**. After you
-launch it (from Applications, or it auto-starts at login once the scheduled agent is on),
-look at the **top-right of your macOS menu bar** for a **shield icon**:
-
-- 🛡️ **green shield** = clean / protected
-- 🛡️ **orange shield** = a threat was found
-
-**Click the shield** to open the control panel (status, Scan Now, and the watcher /
-scheduled-scan toggles). If you don't see it, the menu bar may be full — widen it by
-removing another icon, or relaunch from `~/Applications/Bastion.app`.
-
-To confirm it's running from a terminal: `pgrep -x Bastion`.
-
-## Uninstall
+## Turn it off / remove it
 
 ```bash
-bash uninstall.sh            # stop the background agents, keep the files
-bash uninstall.sh --purge    # stop and remove everything
+bash uninstall.sh            # stop the background protection, keep the app
+bash uninstall.sh --purge    # remove everything
 ```
 
-## Layout
+## What it can't do (honest limits)
 
-| File | Role |
-|------|------|
-| `app/SecurityGuard.swift` | SwiftUI MenuBarExtra UI |
-| `scanner.sh` | read-only structural detector (exit 0 clean / 2 findings) |
-| `guard.sh` | scan -> quarantine -> alert |
-| `watcher.sh` | ~15s real-time watch |
-| `git-guard` | blocks infected commits/pushes |
-| `install.sh` / `uninstall.sh` | portable per-user launchd setup |
-| `build.sh` | compiles the app + dmg via Command Line Tools |
+- It's a **specialist**, not a full antivirus — it's built for this one family of attacks plus
+  the mess they leave behind. Keep a general scanner around too.
+- It **cleans your machine**, but it can't fix the root cause if the bad code keeps coming from
+  a compromised repo account — that needs you to rotate credentials and remove bad access.
+- It's **self-signed**, so the first launch shows an "unidentified developer" warning
+  (right-click → Open gets past it). App Store distribution would need an Apple Developer account.
 
-## Honest limits
+## Files in this repo
 
-- **Targeted, not antivirus.** It defends against this specific supply-chain family and
-  the hygiene artifacts around it — pair it with a general scanner for broad coverage.
-- **Detection + containment, not root cause.** It can't stop a payload reappearing from a
-  compromised repo account; that needs credential rotation and access cleanup upstream.
-- **Self-signed.** Fine for personal/team use; App Store distribution needs a Developer ID.
+| File | What it is |
+|------|-----------|
+| `app/SecurityGuard.swift` | the menu-bar app (SwiftUI) |
+| `scanner.sh` | the detector that finds the malware |
+| `guard.sh` | runs a scan, quarantines junk, alerts you |
+| `watcher.sh` | the real-time 15-second guard |
+| `git-guard` | blocks infected commits |
+| `install.sh` / `uninstall.sh` | turn the background protection on/off |
+| `build.sh` | builds the app and the .dmg |

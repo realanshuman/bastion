@@ -7,7 +7,7 @@ ROOTS=("$@"); [ ${#ROOTS[@]} -eq 0 ] && ROOTS=("$HOME")
 C2_IP='23.27.20.187'
 FOUND=0
 emit(){ printf '%s\n' "$*"; }              # a finding line, machine-parseable
-PRUNE='( -name node_modules -o -name .git -o -name .next -o -name dist -o -name build -o -name .cache -o -name Caches -o -name .Trash -o -name .pnpm-store -o -name .npm -o -name .security-guard )'
+PRUNE='( -name node_modules -o -name .git -o -name .next -o -name dist -o -name build -o -name .cache -o -name Caches -o -name .Trash -o -name .pnpm-store -o -name .npm -o -name .security-guard -o -name Library )'
 
 # 1. config files: createRequire, >500-char line, global.X='N-...' marker, eval/atob, huge padding
 while IFS= read -r -d '' f; do
