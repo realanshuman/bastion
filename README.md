@@ -34,6 +34,17 @@ catches new variants that signature scanners miss.
 - **Menu-bar UI** — shield icon (green = clean, orange = threat) with a click-down panel
   for status, Scan Now, and toggles.
 
+## New in 2.0
+
+- **Redesigned panel** — hero status card, live stat tiles (repos / configs / quarantine),
+  and a segmented **Overview · Activity · Quarantine** view.
+- **In-app quarantine viewer** — see every contained artifact with a Reveal-in-Finder action.
+- **Activity log** — the full threat/quarantine history, in the panel.
+- **Scan scope selector** — full-home scan, or "Git repos only" for a fast pass.
+- **One-click git-guard install** — protect every unprotected repo (blocks infected commits)
+  straight from the panel.
+- **Live stats** — repos and config files under watch, at a glance.
+
 ## Why "structural" detection
 
 The payload changes its campaign marker each run — `global.i='1-project'`, `'1-183'`,
