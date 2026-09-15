@@ -4,7 +4,7 @@
 <dict>
   <key>CFBundleName</key><string>Bastion</string>
   <key>CFBundleDisplayName</key><string>Bastion</string>
-  <key>CFBundleIdentifier</key><string>io.genflix.bastion</string>
+  <key>CFBundleIdentifier</key><string>io.anshuman.bastion</string>
   <key>CFBundleExecutable</key><string>Bastion</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>

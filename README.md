@@ -10,7 +10,7 @@
 ![Swift](https://img.shields.io/badge/Swift-6-orange)
 ![UI](https://img.shields.io/badge/UI-SwiftUI%20MenuBarExtra-purple)
 ![Scope](https://img.shields.io/badge/scope-targeted%20guard-informational)
-![License](https://img.shields.io/badge/license-private-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 A native menu-bar app that watches for the config-injection supply-chain payload
 family — the obfuscated loader that hides in `postcss.config.*` / `orval.config.*`,
