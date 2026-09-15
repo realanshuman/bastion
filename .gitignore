@@ -6,6 +6,7 @@ ALERTS.txt
 com.*.securityguard*.plist
 # build artifacts
 app/icongen
+app/panelgen
 app/icon-*.png
 app/AppIcon.iconset/
 *.icns
