@@ -13,3 +13,5 @@ app/AppIcon.iconset/
 *.dmg
 Bastion.app/
 .DS_Store
+app/shot-*.png
+app/panel.swift
