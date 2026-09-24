@@ -1025,7 +1025,11 @@ struct IncidentMain: View {
             } else {
                 Text("Not tracked by git.").font(uiFont(12.5)).foregroundStyle(DT.dim)
             }
-            Text("Payload signs: \(f["detail"] as? String ?? "")").font(codeFont(11)).foregroundStyle(DT.faint)
+            if let proof = f["evidence_text"] as? String, !proof.isEmpty {
+                Text(proof).font(codeFont(11)).foregroundStyle(DT.dim).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Payload signs: \(f["detail"] as? String ?? "")").font(codeFont(11)).foregroundStyle(DT.faint)
+            }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
         .background(DT.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1046,6 +1050,10 @@ struct IncidentMain: View {
                             if let why = t["why"] as? String, !why.isEmpty { Text(why).font(uiFont(12.5)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true) }
                             if let how = t["how"] as? String, !how.isEmpty { Text(how).font(uiFont(12.5)).foregroundStyle(DT.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true) }
                             if let cmd = t["cmd"] as? String, !cmd.isEmpty { CommandBlock(text: cmd).padding(.top, 2) }
+                            if let link = t["link"] as? String, let url = URL(string: link) {
+                                Button { NSWorkspace.shared.open(url) } label: { Label("See it on GitHub", systemImage: "arrow.up.right.square") }
+                                    .buttonStyle(SecondaryButton()).padding(.top, 2)
+                            }
                         }
                     }.padding(14)
                 }
@@ -1277,7 +1285,9 @@ struct RepoRow: View {
         } else if let n = repo["findings"] as? Int, n > 0 {
             badge(DT.red, "\(n) finding\(n == 1 ? "" : "s")")
         } else if let b = repo["infected_branches"] as? Int, b > 0 {
+            let files = repo["infected_branch_files"] as? Int ?? b
             badge(DT.orange, "\(b) infected branch\(b == 1 ? "" : "es")")
+                .help("\(files) file\(files == 1 ? "" : "s") on \(b) branch\(b == 1 ? "" : "es") that \(b == 1 ? "isn't" : "aren't") checked out. Nothing runs unless someone switches to \(b == 1 ? "it" : "one") and runs npm — the incident shows exactly where and how to fix it.")
         } else {
             badge(DT.green, "Clean")
         }

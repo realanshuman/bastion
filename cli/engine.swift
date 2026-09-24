@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "4.1.2"
+let VERSION = "4.1.3"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -257,7 +257,8 @@ func reposReport() -> [String: Any] {
         let mine = open.filter { ($0["path"] as? String ?? "").hasPrefix(repo + "/") }
         let branches = (last?["findings"] as? [[String: Any]] ?? []).filter { $0["kind"] as? String == "infected_branch" && $0["path"] as? String == repo }
         return ["path": repo, "name": (repo as NSString).lastPathComponent, "branch": branch, "remote": remote,
-                "git_guard": gitGuardState(repo), "findings": mine.count, "infected_branches": branches.count, "pr_guard": prGuardInstalled(repo)]
+                "git_guard": gitGuardState(repo), "findings": mine.count, "infected_branches": Set(branches.compactMap { $0["ref"] as? String }).count,
+                "infected_branch_files": branches.count, "pr_guard": prGuardInstalled(repo)]
     }
     return ["repos": repos, "last_scan": last?["time"] ?? NSNull()]
 }
@@ -517,6 +518,7 @@ func checkPath(_ raw: String) throws -> [String: Any] {
     let refList = refs.joined(separator: ", ")
     if !refs.isEmpty {
         out["infected_branch_refs"] = refs
+        out["branch_details"] = branchContexts(branches)
         out["branch_advice"] = "Don't check out or merge \(refs.count == 1 ? "this branch" : "these branches") until \(refs.count == 1 ? "it's" : "they're") cleaned: \(refList)."
     }
     out["advice"] = !project.isEmpty

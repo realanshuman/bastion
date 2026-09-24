@@ -392,9 +392,22 @@ do {
             for b in list { print("BRANCH|\(b["repo"] ?? "")|\(b["ref"] ?? "") \(b["file"] ?? "") \(b["commit"] ?? "")") }
             exit(0)
         }
-        output(["infected_branches": list, "clean": list.isEmpty], code: list.isEmpty ? 0 : 2) {
+        let details = branchContexts(list)
+        output(["infected_branches": list, "branches": details, "clean": list.isEmpty], code: list.isEmpty ? 0 : 2) {
             if list.isEmpty { print(good("✓ no payload on any branch")) }
-            for b in list { print(bad("✗ ") + strong(b["ref"] as? String ?? "") + "  \(b["file"] ?? "")" + faint("  \(tilde(b["repo"] as? String ?? "")) · \(b["commit"] ?? "")")) }
+            for c in details {
+                let fix = c["fix"] as? [String: Any] ?? [:]
+                print(bad("✗ ") + strong(c["ref"] as? String ?? "") + faint("  in \(tilde(c["repo"] as? String ?? ""))"))
+                if let d = c["default_branch"] as? String, c["default_clean"] as? Bool == true { print("  " + good("\(d) is clean") + faint(" — only this branch carries it")) }
+                for p in c["proof"] as? [[String: Any]] ?? [] {
+                    print("  \(p["file"] ?? ""): " + (p["text"] as? String ?? ""))
+                    if let see = p["see_it"] as? String { print(faint("    see it: ") + see) }
+                    if let url = p["github_url"] as? String { print(faint("    on GitHub: ") + url) }
+                }
+                print("  " + strong("Fix: " + (fix["title"] as? String ?? "")))
+                print(faint("  " + (fix["why"] as? String ?? "")))
+                for cmd in fix["commands"] as? [String] ?? [] { print("    " + cmd) }
+            }
         }
 
     case "history":

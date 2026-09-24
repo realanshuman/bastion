@@ -71,7 +71,7 @@ final class GuardModel: ObservableObject {
 
     let dir = HOME_DIR + "/.security-guard"
     let home = HOME_DIR
-    let version = "4.1.2"
+    let version = "4.1.3"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 

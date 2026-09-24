@@ -500,6 +500,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
             let isConfig = kind == "injected_config"
             var info: [String: Any] = ["path": path, "rel": rel, "kind": kind, "title": f["title"] ?? "", "detail": f["detail"] ?? ""]
             let worktree = fm.contents(atPath: path) ?? Data()
+            info["evidence_text"] = evidenceSentence(hiddenCodeEvidence(worktree))
             if let m = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date {
                 infectedSince = min(infectedSince ?? m.timeIntervalSince1970, m.timeIntervalSince1970)
             }
@@ -603,6 +604,18 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
         }
         repoCases.removeAll { $0["path"] as? String == repo }
         repoCases.append(entry)
+    }
+
+    // branches fixed since the last response (in repos this scan covered) are no longer to-dos
+    let covered: [String] = {
+        if let log = fromLog, let line = readText(log).split(separator: "\n").first(where: { $0.hasPrefix("roots: ") }) {
+            return line.dropFirst(7).split(separator: " ").map(String.init)
+        }
+        return paths.isEmpty ? [HOME] : paths
+    }()
+    for i in repoCases.indices {
+        let p = repoCases[i]["path"] as? String ?? ""
+        if grouped[p] == nil, covered.contains(where: { p == $0 || p.hasPrefix($0 + "/") }) { repoCases[i]["branches"] = [[String: Any]]() }
     }
 
     // 3. MACHINE — leftovers, loaders and live connections
@@ -767,11 +780,17 @@ func buildTodos(_ inc: [String: Any]) -> [[String: String]] {
                           "why": "\(pushed.joined(separator: ", ")) still carr\(pushed.count == 1 ? "ies" : "y") the bad commit — anyone who pulls \(pushed.count == 1 ? "it" : "them") gets the malware.",
                           "cmd": "# after committing the fix, push each branch you use\ngit -C \(shellPath(repo)) push\n# and delete the ones you don't\ngit -C \(shellPath(repo)) push <remote> --delete <branch>"])
         }
-        let infected = r["branches"] as? [[String: Any]] ?? []
-        if !infected.isEmpty {
-            todos.append(["title": "Clean the infected branch\(infected.count == 1 ? "" : "es") of \(name)",
-                          "why": infected.map { "\($0["ref"] as? String ?? "") (\($0["file"] as? String ?? ""))" }.joined(separator: ", ") + " — checking one out and running dev, build or test would run the malware.",
-                          "cmd": "# delete a branch you don't need, locally and on the server\ngit -C \(shellPath(repo)) branch -D <branch>\ngit -C \(shellPath(repo)) push <remote> --delete <branch>\n# or restore the file on that branch from a clean commit and commit the fix"])
+        // one to-do per infected branch, with proof and the fix that fits it
+        for c in branchContexts((r["branches"] as? [[String: Any]] ?? []).map { var b = $0; b["path"] = repo; return b }) {
+            let fix = c["fix"] as? [String: Any] ?? [:]
+            let proofs = c["proof"] as? [[String: Any]] ?? []
+            let proofText = proofs.map { "\($0["file"] as? String ?? ""): \($0["text"] as? String ?? "")" }.joined(separator: "\n")
+            var cmd = (fix["commands"] as? [String] ?? []).joined(separator: "\n")
+            if let see = proofs.first?["see_it"] as? String { cmd = "# see it yourself:\n\(see)\n# fix:\n" + cmd }
+            var todo: [String: String] = ["title": "\(fix["title"] as? String ?? "Clean \(c["ref"] ?? "")") (\(name))",
+                                          "why": (fix["why"] as? String ?? "") + (proofText.isEmpty ? "" : "\n" + proofText), "cmd": cmd]
+            if let url = proofs.first?["github_url"] as? String { todo["link"] = url }
+            todos.append(todo)
         }
         if !(r["dependencies"] as? [[String: Any]] ?? []).isEmpty {
             todos.append(["title": "Reinstall \(name)'s dependencies safely",
@@ -853,7 +872,9 @@ func buildSummary(_ inc: [String: Any]) -> String {
     let k = done("kill", "stop_process"); if k > 0 { did.append("stopped \(k) process\(k == 1 ? "" : "es")") }
     let q = done("quarantine"); if q > 0 { did.append("quarantined \(q) item\(q == 1 ? "" : "s")") }
     let b = done("block"); if b > 0 { did.append("blocked \(b) address\(b == 1 ? "" : "es")") }
-    let repoList = inc["repos"] as? [[String: Any]] ?? []
+    // repos that still have something in this incident (a branch fixed since doesn't count)
+    let repoList = (inc["repos"] as? [[String: Any]] ?? []).filter { r in
+        ["files", "hooks", "branches", "dependencies"].contains { !((r[$0] as? [Any]) ?? []).isEmpty } }
     let repos = repoList.count
     let scope = repos > 0 ? "an attack on \(repos) repo\(repos == 1 ? "" : "s")" : "signs of malware on this Mac"
     // only dormant branches: nothing ran and nothing needed containing, so don't call it "contained an attack"

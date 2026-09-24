@@ -576,3 +576,146 @@ func ciSetup(_ raw: String, write: Bool) throws -> [String: Any] {
             "next": already || written ? "Commit and push .github/workflows/bastion.yml — every pull request is checked from then on."
                                        : "Run with --write to add .github/workflows/bastion.yml."]
 }
+
+// MARK: - Proof and the right fix for an infected branch (so a developer can see it for themselves)
+
+let PAYLOAD_MARKER_RE = #"global\.[a-z]{1,2}\s*=\s*['"][0-9]+-[0-9]+['"]"#
+
+/// Where the payload hides in a file: the line, how much blank space pushes it off-screen, where it starts, how it begins.
+func hiddenCodeEvidence(_ data: Data) -> [String: Any] {
+    let lines = String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
+    guard !lines.isEmpty else { return [:] }
+    let i = lines.firstIndex { $0.range(of: PAYLOAD_MARKER_RE, options: .regularExpression) != nil }
+        ?? lines.indices.max { lines[$0].count < lines[$1].count } ?? 0
+    let line = lines[i]
+    var out: [String: Any] = ["line": i + 1, "line_length": line.count, "lines": lines.count]
+    if let pad = line.range(of: #"[ \t]{40,}"#, options: .regularExpression), pad.upperBound < line.endIndex {
+        out["padding"] = line.distance(from: pad.lowerBound, to: pad.upperBound)
+        out["column"] = line.distance(from: line.startIndex, to: pad.upperBound) + 1
+        out["visible"] = String(line[..<pad.lowerBound]).trimmed
+        out["snippet"] = String(line[pad.upperBound...].prefix(64))
+    } else if let m = line.range(of: PAYLOAD_MARKER_RE, options: .regularExpression) {
+        out["column"] = line.distance(from: line.startIndex, to: m.lowerBound) + 1
+        out["snippet"] = String(line[m.lowerBound...].prefix(64))
+    }
+    return out
+}
+
+/// "Line 8 looks like “};”, but 2,000 spaces hide code off-screen — it starts at column 2003: global.o='1-183';…"
+func evidenceSentence(_ ev: [String: Any]) -> String {
+    guard let line = ev["line"] as? Int else { return "" }
+    let snippet = (ev["snippet"] as? String).map { $0 + "…" } ?? ""
+    if let pad = ev["padding"] as? Int, let col = ev["column"] as? Int {
+        let visible = (ev["visible"] as? String ?? "").isEmpty ? "" : " looks like “\((ev["visible"] as? String ?? "").prefix(40))”, but"
+        return "Line \(line)\(visible) \(pad.formatted()) blank characters push hidden code off-screen — it starts at column \(col.formatted()): \(snippet)"
+    }
+    if let col = ev["column"] as? Int { return "Line \(line), column \(col.formatted()): \(snippet)" }
+    return "Line \(line) is \((ev["line_length"] as? Int ?? 0).formatted()) characters of obfuscated code."
+}
+
+func defaultBranch(_ repo: String) -> String? {
+    if let r = git(repo, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"])?.trimmed, !r.isEmpty { return r }
+    return ["origin/main", "origin/master", "main", "master"].first { git(repo, ["rev-parse", "-q", "--verify", $0 + "^{commit}"]) != nil }
+}
+
+func githubURL(_ repo: String) -> String? {
+    guard let u = git(repo, ["remote", "get-url", "origin"])?.trimmed else { return nil }
+    let s = u.replacingOccurrences(of: #"^git@github\.com:"#, with: "https://github.com/", options: .regularExpression)
+        .replacingOccurrences(of: #"^https://[^@/]+@github\.com/"#, with: "https://github.com/", options: .regularExpression)
+        .replacingOccurrences(of: #"\.git$"#, with: "", options: .regularExpression)
+    return s.hasPrefix("https://github.com/") ? s : nil
+}
+
+private func blobClean(_ repo: String, _ spec: String) -> Bool? {   // nil = no such file there
+    guard let blob = git(repo, ["rev-parse", "-q", "--verify", spec])?.trimmed, !blob.isEmpty else { return nil }
+    if let v = SCAN_CACHE.verdict(blob) { return v.isEmpty }
+    return gitData(repo, ["cat-file", "-p", blob]).map { payloadReasons($0, config: true).isEmpty } ?? true
+}
+
+/// Everything about one infected branch: proof, how to see it, whether the main branch is clean, and the fix that fits.
+func branchContext(repo: String, ref: String, files: [String]) -> [String: Any] {
+    let remotes = (git(repo, ["remote"]) ?? "").split(separator: "\n").map(String.init)
+    let remote = remotes.first { ref.hasPrefix($0 + "/") }
+    let branch = remote.map { String(ref.dropFirst($0.count + 1)) } ?? ref
+    let current = git(repo, ["symbolic-ref", "-q", "--short", "HEAD"])?.trimmed ?? ""
+    let r = shellPath(repo)
+    var out: [String: Any] = ["repo": repo, "ref": ref, "branch": branch, "on_server": remote != nil, "files": files]
+    var proofs: [[String: Any]] = []
+    for f in files {
+        var p: [String: Any] = ["file": f]
+        if let data = gitData(repo, ["cat-file", "-p", "\(ref):\(f)"]) {
+            let ev = hiddenCodeEvidence(data)
+            p["evidence"] = ev; p["text"] = evidenceSentence(ev)
+            if let line = ev["line"] as? Int, let col = ev["column"] as? Int {
+                p["see_it"] = "git -C \(r) show \(ref):\(f) | sed -n \(line)p | cut -c\(col)-\(col + 80)"
+            }
+            if remote != nil, let gh = githubURL(repo) { p["github_url"] = "\(gh)/blob/\(branch)/\(f)" + ((ev["line"] as? Int).map { "#L\($0)" } ?? "") }
+        }
+        proofs.append(p)
+    }
+    out["proof"] = proofs
+    let tip = (git(repo, ["log", "-1", "--format=%h%x1f%an%x1f%cI%x1f%s", ref])?.trimmed ?? "").components(separatedBy: "\u{1f}")
+    if tip.count == 4 { out["last_commit"] = ["short": tip[0], "author": tip[1], "date": tip[2], "subject": tip[3]] }
+    let def = defaultBranch(repo)
+    if let def, def != ref, !(remote == nil && def.hasSuffix("/" + branch)) {
+        out["default_branch"] = def
+        let states = files.map { blobClean(repo, "\(def):\($0)") }
+        out["default_clean"] = states.allSatisfy { $0 != false }
+        out["default_has_files"] = states.contains { $0 != nil }
+        out["behind_default"] = Int(git(repo, ["rev-list", "--count", "\(ref)..\(def)"])?.trimmed ?? "")
+    }
+    let defName = (out["default_branch"] as? String).map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? "main"
+    // the fix that fits this branch
+    var title = "", why = "", cmds: [String] = [], risk = "safe"
+    let localExists = git(repo, ["rev-parse", "-q", "--verify", "refs/heads/\(branch)"]) != nil
+    let localClean = localExists && files.allSatisfy { blobClean(repo, "refs/heads/\(branch):\($0)") != false }
+    let onlyInfectedDiffer: Bool = {
+        guard remote != nil, localExists else { return false }
+        let changed = Set((git(repo, ["diff", "--name-only", ref, "refs/heads/\(branch)"]) ?? "").split(separator: "\n").map(String.init))
+        return !changed.isEmpty && changed.isSubset(of: Set(files))
+    }()
+    if let remote, localClean, onlyInfectedDiffer {
+        title = "Push your clean copy of \(branch)"
+        why = "Your local \(branch) is the same work without the injected code — it differs from the server only in the infected file\(files.count == 1 ? "" : "s"). Pushing it replaces the infected commit (rewrites \(branch)'s history on the server)."
+        cmds = ["git -C \(r) push --force-with-lease=\(branch):\(git(repo, ["rev-parse", "--short=12", ref])?.trimmed ?? ref) \(remote) \(branch)"]
+        risk = "rewrites-history"
+    } else if remote == nil, let up = git(repo, ["rev-parse", "-q", "--abbrev-ref", "\(branch)@{upstream}"])?.trimmed, !up.isEmpty,
+              files.allSatisfy({ blobClean(repo, "\(up):\($0)") != false }),
+              git(repo, ["merge-base", "--is-ancestor", "refs/heads/\(branch)", up]) != nil {
+        title = "Update your local \(branch) — the server copy is clean"
+        why = "Your local \(branch) is just behind \(up), which no longer has the injected code. Updating it doesn't switch branches or run anything."
+        let parts = up.split(separator: "/", maxSplits: 1).map(String.init)
+        cmds = [branch == current ? "git -C \(r) pull --ff-only" : "git -C \(r) fetch \(parts.first ?? "origin") \(parts.count == 2 ? parts[1] : branch):\(branch)"]
+    } else if let remote, out["default_clean"] as? Bool == true {
+        title = "Delete the old branch \(branch) — \(defName) is clean"
+        why = "\(defName) doesn't have the injected code\((out["default_has_files"] as? Bool) == false ? " (the file isn't there at all)" : ""); only this branch still carries an old copy. If you still need the branch, fix the file on it instead."
+        cmds = ["git -C \(r) push \(remote) --delete \(branch)"] + (localExists && branch != current ? ["git -C \(r) branch -D \(branch)"] : [])
+        risk = "deletes-branch"
+    } else if remote == nil {
+        title = "Delete or fix your local branch \(branch)"
+        why = "It's only on this Mac. Delete it if you don't need it; otherwise switch to it (that alone runs nothing) and restore the file\(files.count == 1 ? "" : "s") from \(defName)."
+        cmds = ["git -C \(r) branch -D \(branch)"]
+        risk = "deletes-branch"
+    } else {
+        title = "Remove the injected code from \(branch)"
+        why = "The code sits at the end of the line shown above, after the long run of blank space. Remove it (or restore the file from its last clean commit), then commit and push."
+        cmds = ["git -C \(r) switch \(branch)   # switching runs nothing; don't run npm until it's fixed"] +
+               files.map { "# edit \($0): delete everything after the long run of spaces on the line shown above" } +
+               ["git -C \(r) commit -am \"Remove injected code\" && git -C \(r) push"]
+        risk = "rewrites-nothing"
+    }
+    out["fix"] = ["title": title, "why": why, "commands": cmds, "risk": risk]
+    return out
+}
+
+/// Group branch findings by (repo, ref) and add proof + fix to each.
+func branchContexts(_ findings: [[String: Any]]) -> [[String: Any]] {
+    var order: [String] = [], files: [String: [String]] = [:], repoOf: [String: String] = [:], refOf: [String: String] = [:]
+    for f in findings {
+        let repo = f["path"] as? String ?? f["repo"] as? String ?? "", ref = f["ref"] as? String ?? ""
+        let key = repo + "|" + ref
+        if files[key] == nil { order.append(key); repoOf[key] = repo; refOf[key] = ref }
+        if let file = f["file"] as? String, !(files[key] ?? []).contains(file) { files[key, default: []].append(file) }
+    }
+    return order.map { branchContext(repo: repoOf[$0] ?? "", ref: refOf[$0] ?? "", files: files[$0] ?? []) }
+}
