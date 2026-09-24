@@ -1,0 +1,13 @@
+# Bastion ignore-list — files that legitimately contain the payload signature
+# (documentation, tests, the detector itself). Matches are treated as benign
+# REFERENCES, not live threats. One path-substring or glob per line.
+SECURITY_INCIDENT
+no-config-payload
+supply-chain-guard
+git-and-security
+LOCAL_DEV_AUTH
+/docs/
+/.security-guard/
+.test.
+__tests__
+.md

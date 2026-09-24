@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Blocks a commit/push if any tracked config file carries the injection payload.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+bad=0
+while IFS= read -r f; do
+  case "$f" in *.config.js|*.config.mjs|*.config.cjs|*.config.ts|*.config.mts|.*rc.js|.*rc.cjs|.*rc.mjs) ;; *) continue;; esac
+  [ -f "$f" ] || continue
+  L=$(awk '{if(length($0)>m)m=length($0)}END{print m+0}' "$f")
+  if grep -q 'createRequire' "$f" || [ "${L:-0}" -gt 500 ] || grep -qE "global\.[a-z]{1,2}[[:space:]]*=[[:space:]]*['\"][0-9]+-" "$f"; then
+    echo "🛑 security-guard: BLOCKED — injection payload in $f (longest line ${L})" >&2
+    bad=1
+  fi
+done < <({ git diff --cached --name-only 2>/dev/null; git ls-files "*.config.*" ".*rc.js" 2>/dev/null; } | sort -u)
+[ "$bad" -eq 1 ] && { echo "   Fix the file before committing/pushing. (security-guard)" >&2; exit 1; }
+exit 0

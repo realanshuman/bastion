@@ -1,0 +1,17 @@
+# runtime state (never commit)
+logs/
+quarantine/
+ALERTS.txt
+# author-specific installer output
+com.*.securityguard*.plist
+# build artifacts
+app/icongen
+app/panelgen
+app/icon-*.png
+app/AppIcon.iconset/
+*.icns
+*.dmg
+Bastion.app/
+.DS_Store
+app/shot-*.png
+app/panel.swift

@@ -1,0 +1,8 @@
+# Bastion blocklist — known command-and-control (C2) indicators.
+# One IP address or hostname per line. Lines starting with # are comments.
+# Any process connecting to one of these is treated as a live threat.
+#
+# Seeded with IOCs from the config-injection / obfuscated-loader supply-chain
+# campaign this tool defends against. Add or remove as your threat intel evolves.
+23.27.20.187
+181.214.149.148

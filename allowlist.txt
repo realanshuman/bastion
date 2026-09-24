@@ -1,0 +1,11 @@
+# Bastion allowlist — trusted infrastructure that must never be flagged as C2.
+# One IP address or hostname per line. Lines starting with # are comments.
+#
+# Add your own backend / API / staging hosts here so Bastion never mistakes
+# your app's normal traffic for a threat. Examples (edit for your setup):
+#
+#   api.example.com
+#   10.0.0.5
+#   staging.internal
+#
+# (ships empty — nothing is trusted until you add it)
