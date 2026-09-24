@@ -37,9 +37,23 @@ done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f \
      -o -name 'postcss.config.*' -o -name 'tailwind.config.*' -o -name 'orval.config.*' \) -print0 2>/dev/null)
 
 # 2. source payload body signatures (outside node_modules), skip docs/detectors
-while IFS= read -r -d '' f; do { is_ignored "$f" || emit "SOURCE|$f|payload-body"; }; FOUND=$((FOUND+1)); done < <(
+while IFS= read -r -d '' f; do is_ignored "$f" && continue; emit "SOURCE|$f|payload-body"; FOUND=$((FOUND+1)); done < <(
   find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.ts' \) -print0 2>/dev/null \
   | xargs -0 grep -laE "_\\\$_[0-9a-f]{4}[[:space:]]*=[[:space:]]*\(function[[:space:]]*\(i,[[:space:]]*p\)|global\.[a-z]{1,2}='[0-9]+-[0-9]" 2>/dev/null | tr '\n' '\0')
+
+# 2b. npm install hooks that fetch/decode code or call a raw IP (they run automatically on install)
+HOOK_RE='(curl|wget)[^"]*\|[[:space:]]*(ba|z)?sh|https?://[0-9]{1,3}(\.[0-9]{1,3}){3}|node[[:space:]]+-e[[:space:]].{150,}|base64[[:space:]]+(-d|--decode)|eval\('
+while IFS= read -r -d '' f; do
+  is_ignored "$f" && continue
+  grep -E '"(preinstall|install|postinstall|prepare|prepublish)"[[:space:]]*:' "$f" 2>/dev/null | grep -qE "$HOOK_RE" \
+    && { emit "SCRIPT|$f|install-hook"; FOUND=$((FOUND+1)); }
+done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f -name package.json -print0 2>/dev/null)
+
+# 2c. editor auto-run tasks: .vscode/tasks.json with runOn=folderOpen executes when the folder is opened
+while IFS= read -r -d '' f; do
+  is_ignored "$f" && continue
+  grep -q '"folderOpen"' "$f" 2>/dev/null && { emit "AUTORUN|$f|runs-on-folder-open"; FOUND=$((FOUND+1)); }
+done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f -name tasks.json -path '*/.vscode/*' -print0 2>/dev/null)
 
 # 3. temp staging dirs / fake npm cache / beacons
 for t in /tmp /var/tmp /private/tmp "${TMPDIR:-/nonexistent}"; do
@@ -61,7 +75,7 @@ P=$(ps -axo pid=,command= 2>/dev/null | grep -E "node([^[:space:]]*)?[[:space:]]
 
 # 6. live C2 connection
 if command -v lsof >/dev/null 2>&1; then
-  for _ip in ${KNOWN_C2:-$C2_IP}; do lsof -nP -i 2>/dev/null | grep -qF "$_ip" && { emit "NETWORK|$_ip|c2-connection"; FOUND=$((FOUND+1)); }; done
+  for _ip in ${KNOWN_C2:-$C2_IP}; do lsof -nP -i 2>/dev/null | grep -qwF "$_ip" && { emit "NETWORK|$_ip|c2-connection"; FOUND=$((FOUND+1)); }; done
 fi
 
 [ "$FOUND" -gt 0 ] && exit 2 || exit 0

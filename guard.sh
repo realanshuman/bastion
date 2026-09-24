@@ -9,7 +9,7 @@ G="$HOME/.security-guard"
 STAMP=$(date '+%Y%m%d-%H%M%S')
 LOG="$G/logs/scan-$STAMP.log"
 QDIR="$G/quarantine/$STAMP"
-notify(){ osascript -e "display notification \"$1\" with title \"🛡 Security Guard\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
+notify(){ [ -n "${BASTION_NO_NOTIFY:-}" ] && return 0; osascript -e "display notification \"$1\" with title \"🛡 Bastion\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
 
 OUT=$("$G/scanner.sh" "$@" 2>/dev/null); RC=$?
 {
@@ -21,6 +21,7 @@ if [ "$RC" -eq 0 ]; then
   echo "RESULT: CLEAN" >> "$LOG"
   # keep only last 30 clean logs tidy
   ls -1t "$G/logs"/scan-*.log 2>/dev/null | tail -n +60 | xargs rm -f 2>/dev/null || true
+  echo "LOG: $LOG"
   exit 0
 fi
 
@@ -36,11 +37,12 @@ while IFS='|' read -r kind path detail; do
         mkdir -p "$(dirname "$dest")" 2>/dev/null
         if mv "$path" "$dest" 2>/dev/null; then
           echo "  QUARANTINED: $path -> $dest" >> "$LOG"; QUARANTINED=$((QUARANTINED+1))
+          printf '%s\t%s\n' "$path" "$kind" >> "$QDIR/.manifest"
         else
           echo "  QUARANTINE-FAILED (left in place): $path" >> "$LOG"
         fi
       fi ;;
-    CONFIG|SOURCE)                      # repo files → ALERT ONLY (never auto-edit)
+    CONFIG|SOURCE|SCRIPT|AUTORUN)       # repo files → ALERT ONLY (never auto-edit)
       echo "  ALERT (needs manual fix, not auto-touched): $path [$detail]" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;
     PROCESS)
       echo "  ALERT: loader process PID(s) $path running — kill manually: kill $path" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;
@@ -54,4 +56,5 @@ echo "SUMMARY: $MSG" >> "$LOG"
 notify "$MSG"
 # also drop a plain-text pointer the user will see
 echo "$STAMP  $MSG  ($LOG)" >> "$G/ALERTS.txt"
+echo "LOG: $LOG"
 exit 2

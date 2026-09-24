@@ -12,11 +12,24 @@ WATCH_LABEL="com.bastion.guard.watcher"
 mkdir -p "$DEST/logs" "$DEST/quarantine" "$LA"
 
 if [ "$SELF" != "$DEST" ]; then
-  for f in scanner.sh guard.sh watcher.sh git-guard harden.sh allowlist.txt ignore.txt README.md; do
+  for f in scanner.sh guard.sh watcher.sh git-guard harden.sh install.sh uninstall.sh README.md LICENSE VERSION; do
     [ -f "$SELF/$f" ] && cp "$SELF/$f" "$DEST/$f"
   done
+  # your lists are yours: never overwrite them; new blocklist entries are merged in
+  for f in allowlist.txt ignore.txt; do [ -f "$DEST/$f" ] || cp "$SELF/$f" "$DEST/$f" 2>/dev/null; done
+  if [ -f "$DEST/blocklist.txt" ]; then
+    grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$SELF/blocklist.txt" 2>/dev/null | while IFS= read -r ip; do
+      grep -qxF "$ip" "$DEST/blocklist.txt" || echo "$ip" >> "$DEST/blocklist.txt"; done
+  else cp "$SELF/blocklist.txt" "$DEST/blocklist.txt" 2>/dev/null; fi
   mkdir -p "$DEST/shims"; cp "$SELF/shims/"* "$DEST/shims/" 2>/dev/null || true
   chmod +x "$DEST"/*.sh "$DEST/git-guard" "$DEST/shims/"* 2>/dev/null || true
+fi
+
+# the `bastion` command (CLI + MCP server for AI agents): prebuilt, or compiled if Swift is available
+mkdir -p "$DEST/bin"
+if [ -x "$SELF/bin/bastion" ] && [ "$SELF" != "$DEST" ]; then cp "$SELF/bin/bastion" "$DEST/bin/bastion"
+elif [ ! -x "$DEST/bin/bastion" ] && [ -f "$SELF/cli/bastion.swift" ] && command -v swiftc >/dev/null 2>&1; then
+  swiftc -O "$SELF/cli/bastion.swift" -o "$DEST/bin/bastion" 2>/dev/null || echo "note: couldn't compile the bastion CLI (the app and background agents still work)"
 fi
 
 want_scan=1; want_watch=1
@@ -51,3 +64,4 @@ if [ "$want_watch" = 1 ]; then
   launchctl load "$LA/$WATCH_LABEL.plist" && loaded="$loaded live-watcher"
 fi
 echo "Bastion agents active:$loaded"
+[ -x "$DEST/bin/bastion" ] && echo "CLI: $DEST/bin/bastion   ·   connect an AI agent: $DEST/bin/bastion connect"

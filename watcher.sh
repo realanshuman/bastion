@@ -12,11 +12,12 @@ DEAD_DROPS="ethereum-rpc.publicnode.com eth.drpc.org eth-mainnet.public.blastapi
 is_ignored(){ [ -f "$G/ignore.txt" ] || return 1; while IFS= read -r pat; do case "$pat" in ""|\#*) continue;; esac; case "$1" in *"$pat"*) return 0;; esac; done < "$G/ignore.txt"; return 1; }
 allowed(){ grep -qxF "$1" <(grep -vE "^\s*#|^\s*$" "$G/allowlist.txt" 2>/dev/null | awk "{print \$1}"); }
 MALWARE_PROCS='^(node|next-server|npm|npx|pnpm|yarn|bun|deno)'
-notify(){ osascript -e "display notification \"$1\" with title \"🛡 Bastion — live\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
+notify(){ [ -n "${BASTION_NO_NOTIFY:-}" ] && return 0; osascript -e "display notification \"$1\" with title \"🛡 Bastion — live\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
 logline(){ echo "$(date '+%F %T')  $1" >> "$G/ALERTS.txt"; }
 qmove(){ local stamp dest; stamp=$(date '+%Y%m%d-%H%M%S')
   dest="$G/quarantine/live-$stamp/$(echo "$1" | sed 's|^/||')"; mkdir -p "$(dirname "$dest")" 2>/dev/null
-  if mv "$1" "$dest" 2>/dev/null; then logline "QUARANTINED [$2]: $1"; notify "Quarantined $2: $(basename "$1")"; fi; }
+  if mv "$1" "$dest" 2>/dev/null; then printf '%s\t%s\n' "$1" "$2" >> "$G/quarantine/live-$stamp/.manifest"
+    logline "QUARANTINED [$2]: $1"; notify "Quarantined $2: $(basename "$1")"; fi; }
 
 echo "$(date '+%F %T')  watcher v2 started (interval ${INTERVAL}s, C2 list: $KNOWN_C2)" >> "$G/logs/watcher.log"
 cycle=0
@@ -42,7 +43,7 @@ while true; do
         else
           logline "ALERT: $pname (PID $pid) → C2 $ip — not auto-killed (close it manually)"; notify "$pname is talking to C2 $ip — close it"
         fi
-      done < <(echo "$net" | grep -F "$ip" | grep ESTABLISHED | awk '{print $1" "$2}' | sort -u)
+      done < <(echo "$net" | grep -wF "$ip" | grep ESTABLISHED | awk '{print $1" "$2}' | sort -u)
     done
     # dead-drop domains (resolved names in lsof)
     for dd in $DEAD_DROPS; do

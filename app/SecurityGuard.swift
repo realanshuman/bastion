@@ -9,6 +9,36 @@ func runShell(_ cmd: String) -> String {
     return String(data: d, encoding: .utf8) ?? ""
 }
 
+/// Runs a program directly (no shell, no login profile) and returns stdout.
+func runTool(_ exe: String, _ args: [String]) -> String {
+    let p = Process(); p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+    let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe(); p.standardInput = FileHandle.nullDevice
+    do { try p.run() } catch { return "" }
+    let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+    return String(data: d, encoding: .utf8) ?? ""
+}
+
+/// Active-threat count from `bastion status` — the same answer an AI agent gets. nil if the CLI isn't installed.
+func cliActiveThreats(_ cli: String) -> Int? {
+    guard FileManager.default.isExecutableFile(atPath: cli),
+          let obj = try? JSONSerialization.jsonObject(with: Data(runTool(cli, ["status", "--fast", "--json"]).utf8)) as? [String: Any],
+          let threats = obj["active_threats"] as? [Any] else { return nil }
+    return threats.count
+}
+
+/// Is Bastion registered as an MCP server? Claude Code: ~/.claude.json (user scope at the top, local scope per project).
+/// Cursor: ~/.cursor/mcp.json. The byte check keeps the common "not connected" case cheap.
+func agentConnected(_ home: String) -> Bool {
+    func listsBastion(_ obj: Any?) -> Bool { ((obj as? [String: Any])?["mcpServers"] as? [String: Any])?["bastion"] != nil }
+    for path in ["\(home)/.claude.json", "\(home)/.cursor/mcp.json"] {
+        guard let d = FileManager.default.contents(atPath: path), d.range(of: Data("\"bastion\"".utf8)) != nil,
+              let root = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
+        if listsBastion(root) { return true }
+        if let projects = root["projects"] as? [String: Any], projects.values.contains(where: listsBastion) { return true }
+    }
+    return false
+}
+
 @MainActor
 final class GuardModel: ObservableObject {
     // fast status
@@ -31,18 +61,34 @@ final class GuardModel: ObservableObject {
     // action states
     @Published var scanning = false
     @Published var applying = ""     // which toggle/action is mid-flight ("watcher"/"schedule"/"guard")
+    @Published var agentCopied = false
+    @Published var agentLinked = false
 
     let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".security-guard")
     let home = NSHomeDirectory()
-    let version = "3.0.0"
+    let version = "3.1.0"
     private var statsLoaded = false
+    var cli: String { "\(dir)/bin/bastion" }
 
-    init() { refreshFast(); loadStats() }
+    init() { refreshFast(); loadStats(); bootstrapEngine() }
+
+    /// First launch (e.g. from the DMG): install or update the engine and the `bastion` CLI from inside the app.
+    private func bootstrapEngine() {
+        let helper = Bundle.main.bundlePath + "/Contents/Helpers/bastion"
+        guard FileManager.default.isExecutableFile(atPath: helper) else { return }
+        Task.detached(priority: .userInitiated) {
+            let out = runTool(helper, ["bootstrap", "--json"])
+            if out.contains("\"installed\"") || out.contains("\"updated\"") {
+                await MainActor.run { self.refreshFast(); self.loadStats(force: true) }
+            }
+        }
+    }
 
     // FAST: log result, alerts, quarantine, agent on/off. Sub-second. Safe to call often.
     func refreshFast() {
-        let dir = self.dir
+        let dir = self.dir, cli = self.cli, home = self.home
         Task.detached(priority: .userInitiated) {
+            let linked = agentConnected(home)
             let latest = runShell("ls -1t \(dir)/logs/scan-*.log 2>/dev/null | head -1").trimmingCharacters(in: .whitespacesAndNewlines)
             var result = "—", scan = "—"
             if !latest.isEmpty {
@@ -56,7 +102,7 @@ final class GuardModel: ObservableObject {
             let finds = hist.filter { $0.contains("ALERT") || $0.contains("QUARANTINED") || $0.contains("DETECTED") || $0.contains("KILLED") }
             // CURRENT posture (not history): a live loader, a live C2 connection, or a non-clean last scan
             let liveLoader = runShell("ps -axo comm=,command= 2>/dev/null | awk '$1 ~ /node$/ && index($0,\"global.r=require\")>0' | wc -l").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
-            let liveC2 = runShell("bl=\"$HOME/.security-guard/blocklist.txt\"; lsof -nP -i 2>/dev/null | grep -F -f <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' \"$bl\" 2>/dev/null) 2>/dev/null | grep -c ESTABLISHED").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
+            let liveC2 = runShell("bl=\"$HOME/.security-guard/blocklist.txt\"; lsof -nP -i 2>/dev/null | grep -wF -f <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' \"$bl\" 2>/dev/null) 2>/dev/null | grep -c ESTABLISHED").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
             let qCount = Int(runShell("find '\(dir)/quarantine' -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
             var qItems: [(name: String, path: String, when: String)] = []
             for b in runShell("ls -1t '\(dir)/quarantine' 2>/dev/null | head -15").split(separator: "\n").map(String.init) where !b.isEmpty {
@@ -70,15 +116,20 @@ final class GuardModel: ObservableObject {
             let eg = runShell("bash '\(dir)/harden.sh' status 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines) == "on"
             let resultClean = result.contains("CLEAN") || result == "—"
             var active = 0
-            if liveLoader { active += 1 }
-            if liveC2 { active += 1 }
-            if !resultClean { active += 1 }
+            if let n = cliActiveThreats(cli) { active = n }   // live loaders, C2 links, unresolved scan findings
+            else {
+                if liveLoader { active += 1 }
+                if liveC2 { active += 1 }
+                if !resultClean { active += 1 }
+            }
             let isClean = active == 0
+            let (res, when, items, threats) = (result, scan, qItems, active)   // immutable copies for the main actor
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    self.lastResult = result; self.lastScan = scan; self.history = hist; self.findings = finds
-                    self.quarantineCount = qCount; self.quarantineItems = qItems
-                    self.watcherOn = w; self.scheduleOn = sc; self.executionGuardOn = eg; self.clean = isClean; self.activeThreats = active
+                    self.lastResult = res; self.lastScan = when; self.history = hist; self.findings = finds
+                    self.quarantineCount = qCount; self.quarantineItems = items
+                    self.watcherOn = w; self.scheduleOn = sc; self.executionGuardOn = eg; self.clean = isClean; self.activeThreats = threats
+                    self.agentLinked = linked
                 }
             }
         }
@@ -98,16 +149,18 @@ final class GuardModel: ObservableObject {
             if !repoRoots.isEmpty {
                 let quoted = repoRoots.map { "'\($0)'" }.joined(separator: " ")
                 configs = Int(runShell("find \(quoted) -maxdepth 3 -type f \\( -name '*.config.js' -o -name '*.config.mjs' -o -name '*.config.cjs' -o -name '*.config.ts' -o -name 'postcss.config.*' -o -name 'vite.config.*' -o -name 'next.config.*' \\) -not -path '*/node_modules/*' 2>/dev/null | wc -l").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+                let globalHooks = ((try? String(contentsOfFile: "\(home)/.gitconfig", encoding: .utf8)) ?? "").lowercased().contains("hookspath")
                 for r in repoRoots {
-                    let hp = runShell("git -C '\(r)' config core.hooksPath 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
-                    let has = runShell("grep -l security-guard '\(r)/.git/hooks/pre-push' 2>/dev/null").isEmpty == false
-                    if hp.isEmpty && !has { unprot += 1 }
+                    let cfg = ((try? String(contentsOfFile: "\(r)/.git/config", encoding: .utf8)) ?? "").lowercased()
+                    let hookExists = FileManager.default.fileExists(atPath: "\(r)/.git/hooks/pre-push")
+                    if !globalHooks && !cfg.contains("hookspath") && !hookExists { unprot += 1 }
                 }
             }
+            let (configCount, unprotected) = (configs, unprot)
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.25)) {
-                    self.reposMonitored = repos; self.configsMonitored = configs
-                    self.gitReposUnprotected = unprot; self.statsLoading = false
+                    self.reposMonitored = repos; self.configsMonitored = configCount
+                    self.gitReposUnprotected = unprotected; self.statsLoading = false
                 }
             }
         }
@@ -149,13 +202,23 @@ final class GuardModel: ObservableObject {
     }
     func installGitGuard() {
         withAnimation { applying = "guard" }
-        let dir = self.dir, home = self.home
+        let dir = self.dir, home = self.home, cli = self.cli
         Task.detached(priority: .userInitiated) {
-            _ = runShell("while IFS= read -r g; do r=$(dirname \"$g\"); hp=$(git -C \"$r\" config core.hooksPath 2>/dev/null); if [ -z \"$hp\" ]; then cp '\(dir)/git-guard' \"$r/.git/hooks/pre-push\" 2>/dev/null && chmod +x \"$r/.git/hooks/pre-push\" 2>/dev/null; fi; done < <(find '\(home)' -maxdepth 4 -type d -name .git -not -path '*/node_modules/*' -not -path '*/Library/*' 2>/dev/null)")
+            if FileManager.default.isExecutableFile(atPath: cli) { _ = runTool(cli, ["enable", "git-guard", "--json"]) }
+            else {   // same rule as the CLI: only repos with no hook setup of their own
+                _ = runShell("while IFS= read -r g; do r=$(dirname \"$g\"); grep -qi hookspath \"$r/.git/config\" 2>/dev/null && continue; [ -e \"$r/.git/hooks/pre-push\" ] && continue; cp '\(dir)/git-guard' \"$r/.git/hooks/pre-push\" 2>/dev/null && chmod +x \"$r/.git/hooks/pre-push\" 2>/dev/null; done < <(find '\(home)' -maxdepth 4 -type d -name .git -not -path '*/node_modules/*' -not -path '*/Library/*' 2>/dev/null)")
+            }
             await MainActor.run { withAnimation { self.applying = "" }; self.loadStats(force: true) }
         }
     }
     func reveal(_ path: String) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+    /// Copies the one-liner that registers Bastion as an MCP server in Claude Code.
+    func copyAgentSetup() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("claude mcp add --scope user bastion -- \"\(cli)\" mcp", forType: .string)
+        withAnimation { agentCopied = true }
+        Task { try? await Task.sleep(nanoseconds: 1_800_000_000); withAnimation { self.agentCopied = false } }
+    }
     func openRepo() { NSWorkspace.shared.open(URL(string: "https://github.com/realanshuman/bastion")!) }
 }
 
@@ -176,6 +239,25 @@ private enum DT {
 }
 private func monoFont(_ size: CGFloat, _ w: Font.Weight = .regular) -> Font {
     .system(size: size, weight: w, design: .monospaced)
+}
+
+/// iOS-style switch in the theme green. NSSwitch ignores .tint and goes grey when the panel isn't key,
+/// which made "on" hard to tell from "off" in the dark theme.
+private struct GreenSwitch: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                Capsule().fill(configuration.isOn ? DT.green : DT.border)
+                Circle().fill(Color.white).frame(width: 16, height: 16).padding(2)
+                    .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+            }
+            .frame(width: 34, height: 20)
+            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: configuration.isOn)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(configuration.isOn ? "on" : "off")
+        .accessibilityAddTraits(.isToggle)
+    }
 }
 
 private struct Panel<Content: View>: View {
@@ -233,12 +315,12 @@ struct PanelView: View {
                 Picker("", selection: $tab.animation(.easeInOut)) {
                     Text("overview").tag(0); Text("activity").tag(1); Text("quarantine").tag(2)
                 }.pickerStyle(.segmented).labelsHidden().font(monoFont(11))
-                Group { switch tab { case 0: overview; case 1: activity; default: quarantine } }
+                Group { switch tab { case 0: VStack(spacing: 15) { overview; agents }; case 1: activity; default: quarantine } }
                 footer
             }
             .padding(16)
         }
-        .frame(width: 372).frame(maxHeight: 640)
+        .frame(width: 372).frame(maxHeight: 720)
         .background(DT.bg)
         .environment(\.colorScheme, .dark)
         .animation(.easeInOut(duration: 0.2), value: model.clean)
@@ -329,21 +411,21 @@ struct PanelView: View {
             row("bolt.fill", DT.green, "real-time watcher") {
                 HStack(spacing: 6) {
                     if model.applying == "watcher" { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                    Toggle("", isOn: Binding(get: { model.watcherOn }, set: { model.toggleWatcher($0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(DT.green)
+                    Toggle("real-time watcher", isOn: Binding(get: { model.watcherOn }, set: { model.toggleWatcher($0) })).labelsHidden().toggleStyle(GreenSwitch())
                 }
             }
             RowDivider()
             row("clock.fill", DT.blue, "scheduled scan · 6h") {
                 HStack(spacing: 6) {
                     if model.applying == "schedule" { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                    Toggle("", isOn: Binding(get: { model.scheduleOn }, set: { model.toggleSchedule($0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(DT.green)
+                    Toggle("scheduled scan", isOn: Binding(get: { model.scheduleOn }, set: { model.toggleSchedule($0) })).labelsHidden().toggleStyle(GreenSwitch())
                 }
             }
             RowDivider()
             row("lock.shield.fill", DT.purple, "execution guard") {
                 HStack(spacing: 6) {
                     if model.applying == "guard-exec" { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                    Toggle("", isOn: Binding(get: { model.executionGuardOn }, set: { model.toggleExecutionGuard($0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(DT.green)
+                    Toggle("execution guard", isOn: Binding(get: { model.executionGuardOn }, set: { model.toggleExecutionGuard($0) })).labelsHidden().toggleStyle(GreenSwitch())
                 }
             }
             RowDivider()
@@ -356,6 +438,24 @@ struct PanelView: View {
                 }.buttonStyle(.plain).disabled(model.applying == "guard")
             } else {
                 row("checkmark.seal.fill", DT.green, "all git repos protected") { EmptyView() }
+            }
+        }
+    }
+
+    private var agents: some View {
+        Section(title: "ai agents") {
+            if model.agentLinked {
+                row("sparkles", DT.green, "agent connected · mcp") {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(DT.green)
+                }
+                .help("Bastion is registered as an MCP server, so your AI agent checks projects before running them.")
+            } else {
+                row("sparkles", DT.blue, "connect claude code") {
+                    Button(action: { model.copyAgentSetup() }) {
+                        Text(model.agentCopied ? "copied ✓" : "copy cmd").font(monoFont(10, .semibold))
+                    }.buttonStyle(.plain).foregroundStyle(model.agentCopied ? DT.green : DT.blue)
+                }
+                .help("Copies the command that plugs Bastion into Claude Code as an MCP server. Paste it in a terminal. For Cursor, Codex and others, run: bastion connect")
             }
         }
     }
