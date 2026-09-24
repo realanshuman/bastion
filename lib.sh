@@ -27,6 +27,12 @@ config_reasons(){
   printf '%s' "${r% }"
 }
 
+# npm install hooks that fetch/decode code or call a raw IP (they run automatically on install)
+BASTION_HOOK_RE='(curl|wget)[^"]*\|[[:space:]]*(ba|z)?sh|https?://[0-9]{1,3}(\.[0-9]{1,3}){3}|node[[:space:]]+-e[[:space:]].{150,}|base64[[:space:]]+(-d|--decode)|eval\('
+install_hook_suspicious(){ grep -E '"(preinstall|install|postinstall|prepare|prepublish)"[[:space:]]*:' "$1" 2>/dev/null | grep -qE "$BASTION_HOOK_RE"; }
+# .vscode/tasks.json with runOn=folderOpen runs a command the moment the folder is opened in VS Code or Cursor
+autorun_task(){ grep -q '"folderOpen"' "$1" 2>/dev/null; }
+
 BASTION_IGNORE="$HOME/.security-guard/ignore.txt"
 # benign references (docs, tests, detectors quoting a signature): any path containing an entry
 is_ignored(){

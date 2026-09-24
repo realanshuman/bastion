@@ -14,7 +14,14 @@ REPORTED="$G/logs/.config-alerts"   # configs already reported, as "path<TAB>mti
 C2_SEEN=" "                         # "pid:ip" pairs already reported (processes we don't auto-kill)
 allowed(){ bastion_list allowlist.txt | grep -qxF "$1"; }
 notify(){ [ -n "${BASTION_NO_NOTIFY:-}" ] && return 0; osascript -e "display notification \"$1\" with title \"🛡 Bastion — live\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
-logline(){ echo "$(date '+%F %T')  $1" >> "$G/ALERTS.txt"; }
+logline(){ echo "$(date '+%F %T')  $1" >> "$G/ALERTS.txt"; EVENT=1; }
+LAST_RESPONSE=0
+respond(){ # hand anything the reflexes caught to the responder (investigate, contain, report) — at most once a minute
+  local now; now=$(date +%s)
+  [ -x "$G/bin/bastion" ] && [ $((now - LAST_RESPONSE)) -ge 60 ] || return 0
+  LAST_RESPONSE=$now
+  ( "$G/bin/bastion" respond --trigger watcher --quiet >/dev/null 2>&1 & )
+}
 qmove(){ # $1 path, $2 reason — moves (never deletes) into quarantine, with a manifest line for restore
   protected_path "$1" && { logline "SKIPPED quarantine of protected path $1 [$2]"; return; }
   local stamp dest; stamp=$(date '+%Y%m%d-%H%M%S')
@@ -32,7 +39,8 @@ while true; do
   while read -r pid; do
     [ -n "$pid" ] || continue
     cmd=$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-120)
-    kill -9 "$pid" 2>/dev/null && { logline "KILLED loader PID $pid : $cmd"; notify "Killed loader (PID $pid)"; }
+    peers=$(lsof -nP -a -p "$pid" -i 2>/dev/null | awk '/->/ { split($0, a, "->"); r = a[2]; sub(/ .*/, "", r); sub(/:[0-9]+$/, "", r); print r }' | sort -u | tr '\n' ' ')
+    kill -9 "$pid" 2>/dev/null && { logline "KILLED loader PID $pid : $cmd${peers:+ (connected to ${peers% })}"; notify "Killed loader (PID $pid)"; }
   done < <(loader_pids)
 
   # 2) C2 CONNECTIONS — exact remote-IP match with the blocklist (re-read every cycle; the allowlist wins).
@@ -79,6 +87,7 @@ while true; do
     done < <(find "$HOME" -maxdepth 5 -type d -name .git -not -path '*/node_modules/*' -not -path '*/Library/*' 2>/dev/null | sed 's|/.git$||' | while read -r r; do find "$r" -maxdepth 2 -name '*.config.*' -not -path '*/node_modules/*' 2>/dev/null; done)
   fi
 
+  [ "${EVENT:-0}" = 1 ] && respond; EVENT=0
   [ "$ONCE" = 1 ] && exit 0
   sleep "$INTERVAL"
 done

@@ -28,8 +28,8 @@ fi
 # the `bastion` command (CLI + MCP server for AI agents): prebuilt, or compiled if Swift is available
 mkdir -p "$DEST/bin"
 if [ -x "$SELF/bin/bastion" ] && [ "$SELF" != "$DEST" ]; then cp "$SELF/bin/bastion" "$DEST/bin/bastion"
-elif [ ! -x "$DEST/bin/bastion" ] && [ -f "$SELF/cli/bastion.swift" ] && command -v swiftc >/dev/null 2>&1; then
-  swiftc -O "$SELF/cli/bastion.swift" -o "$DEST/bin/bastion" 2>/dev/null || echo "note: couldn't compile the bastion CLI (the app and background agents still work)"
+elif [ ! -x "$DEST/bin/bastion" ] && [ -f "$SELF/cli/main.swift" ] && command -v swiftc >/dev/null 2>&1; then
+  swiftc -O "$SELF"/cli/*.swift -o "$DEST/bin/bastion" 2>/dev/null || echo "note: couldn't compile the bastion CLI (the app and background agents still work)"
 fi
 
 want_scan=1; want_watch=1

@@ -16,3 +16,6 @@ Bastion.app/
 app/shot-*.png
 app/panel.swift
 bin/
+incidents/
+settings.json
+respond.lock/

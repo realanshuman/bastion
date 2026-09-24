@@ -30,17 +30,15 @@ done < <(
   | xargs -0 grep -laE "$BASTION_SCRAMBLER_RE|$BASTION_MARKER_RE" 2>/dev/null | tr '\n' '\0')
 
 # 2b. npm install hooks that fetch/decode code or call a raw IP (they run automatically on install)
-HOOK_RE='(curl|wget)[^"]*\|[[:space:]]*(ba|z)?sh|https?://[0-9]{1,3}(\.[0-9]{1,3}){3}|node[[:space:]]+-e[[:space:]].{150,}|base64[[:space:]]+(-d|--decode)|eval\('
 while IFS= read -r -d '' f; do
   is_ignored "$f" && continue
-  grep -E '"(preinstall|install|postinstall|prepare|prepublish)"[[:space:]]*:' "$f" 2>/dev/null | grep -qE "$HOOK_RE" \
-    && { emit "SCRIPT|$f|install-hook"; FOUND=$((FOUND+1)); }
+  install_hook_suspicious "$f" && { emit "SCRIPT|$f|install-hook"; FOUND=$((FOUND+1)); }
 done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f -name package.json -print0 2>/dev/null)
 
 # 2c. editor auto-run tasks: .vscode/tasks.json with runOn=folderOpen executes when the folder is opened
 while IFS= read -r -d '' f; do
   is_ignored "$f" && continue
-  grep -q '"folderOpen"' "$f" 2>/dev/null && { emit "AUTORUN|$f|runs-on-folder-open"; FOUND=$((FOUND+1)); }
+  autorun_task "$f" && { emit "AUTORUN|$f|runs-on-folder-open"; FOUND=$((FOUND+1)); }
 done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f -name tasks.json -path '*/.vscode/*' -print0 2>/dev/null)
 
 # 3. temp staging dirs / fake npm cache / beacons / harvested data

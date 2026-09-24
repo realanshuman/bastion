@@ -19,11 +19,11 @@ func runTool(_ exe: String, _ args: [String]) -> String {
 }
 
 /// Active-threat count from `bastion status` — the same answer an AI agent gets. nil if the CLI isn't installed.
-func cliActiveThreats(_ cli: String) -> Int? {
+func cliStatus(_ cli: String) -> [String: Any]? {
     guard FileManager.default.isExecutableFile(atPath: cli),
           let obj = try? JSONSerialization.jsonObject(with: Data(runTool(cli, ["status", "--fast", "--json"]).utf8)) as? [String: Any],
-          let threats = obj["active_threats"] as? [Any] else { return nil }
-    return threats.count
+          obj["active_threats"] is [Any] else { return nil }
+    return obj
 }
 
 /// Is Bastion registered as an MCP server? Claude Code: ~/.claude.json (user scope at the top, local scope per project).
@@ -63,10 +63,15 @@ final class GuardModel: ObservableObject {
     @Published var applying = ""     // which toggle/action is mid-flight ("watcher"/"schedule"/"guard")
     @Published var agentCopied = false
     @Published var agentLinked = false
+    @Published var incidentId = ""
+    @Published var incidentStatus = ""
+    @Published var incidentSummary = ""
+    @Published var incidentTodos = 0
+    @Published var autonomy = "contain"
 
-    let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".security-guard")
-    let home = NSHomeDirectory()
-    let version = "3.1.1"
+    let dir = HOME_DIR + "/.security-guard"
+    let home = HOME_DIR
+    let version = "4.0.0"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 
@@ -116,7 +121,11 @@ final class GuardModel: ObservableObject {
             let eg = runShell("bash '\(dir)/harden.sh' status 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines) == "on"
             let resultClean = result.contains("CLEAN") || result == "—"
             var active = 0
-            if let n = cliActiveThreats(cli) { active = n }   // live loaders, C2 links, unresolved scan findings
+            let cs = cliStatus(cli)
+            let inc = cs?["incident"] as? [String: Any]
+            let (incId, incStatus, incSummary, incTodos) = (inc?["id"] as? String ?? "", inc?["status"] as? String ?? "", inc?["summary"] as? String ?? "", inc?["todos"] as? Int ?? 0)
+            let level = cs?["autonomy"] as? String ?? "contain"
+            if let n = (cs?["active_threats"] as? [Any])?.count { active = n }   // live loaders, C2 links, unresolved scan findings
             else {
                 if liveLoader { active += 1 }
                 if liveC2 { active += 1 }
@@ -130,6 +139,8 @@ final class GuardModel: ObservableObject {
                     self.quarantineCount = qCount; self.quarantineItems = items
                     self.watcherOn = w; self.scheduleOn = sc; self.executionGuardOn = eg; self.clean = isClean; self.activeThreats = threats
                     self.agentLinked = linked
+                    self.incidentId = incId; self.incidentStatus = incStatus; self.incidentSummary = incSummary; self.incidentTodos = incTodos
+                    self.autonomy = level
                 }
             }
         }
@@ -212,6 +223,10 @@ final class GuardModel: ObservableObject {
         }
     }
     func reveal(_ path: String) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+    func setAutonomy(_ on: Bool) {
+        withAnimation { autonomy = on ? "contain" : "observe" }   // optimistic
+        act("autonomy", "'\(cli)' autonomy \(on ? "contain" : "observe --yes")")
+    }
     /// Copies the one-liner that registers Bastion as an MCP server in Claude Code.
     func copyAgentSetup() {
         NSPasteboard.general.clearContents()
@@ -222,37 +237,53 @@ final class GuardModel: ObservableObject {
     func openRepo() { NSWorkspace.shared.open(URL(string: "https://github.com/realanshuman/bastion")!) }
 }
 
-// MARK: - Developer (dark) theme
-private enum DT {
-    static let bg      = Color(red:0.043, green:0.055, blue:0.078)  // #0B0E14
-    static let surface = Color(red:0.090, green:0.106, blue:0.145)  // #171B25
-    static let surface2 = Color(red:0.125, green:0.145, blue:0.19)
-    static let border  = Color(red:0.192, green:0.212, blue:0.255)  // #30363D
-    static let text    = Color(red:0.79,  green:0.82,  blue:0.85)   // #C9D1D9
-    static let dim     = Color(red:0.55,  green:0.58,  blue:0.62)   // #8B949E
-    static let green   = Color(red:0.247, green:0.725, blue:0.314)  // #3FB950
-    static let blue    = Color(red:0.345, green:0.651, blue:1.0)    // #58A6FF
-    static let purple  = Color(red:0.737, green:0.549, blue:1.0)    // #BC8CFF
-    static let orange  = Color(red:0.941, green:0.533, blue:0.243)  // #F0883E
-    static let red     = Color(red:0.973, green:0.318, blue:0.286)  // #F85149
-    static let mono    = "SF Mono"
-}
-private func monoFont(_ size: CGFloat, _ w: Font.Weight = .regular) -> Font {
-    .system(size: size, weight: w, design: .monospaced)
+// MARK: - Design system
+// Linear-inspired dark: flat layered surfaces, hairline borders, tight SF Pro type, indigo accent.
+// Bastion keeps its own name and shield mark.
+
+extension Color {
+    init(hex: UInt32, alpha: Double = 1) {
+        self.init(.sRGB, red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255,
+                  blue: Double(hex & 0xFF) / 255, opacity: alpha)
+    }
 }
 
-/// iOS-style switch in the theme green. NSSwitch ignores .tint and goes grey when the panel isn't key,
-/// which made "on" hard to tell from "off" in the dark theme.
-private struct GreenSwitch: ToggleStyle {
+enum DT {
+    static let bg       = Color(hex: 0x0E0F11)   // window and sidebar
+    static let panel    = Color(hex: 0x141518)   // inset content panel
+    static let surface  = Color(hex: 0x1A1B1E)   // cards, hovered rows
+    static let surface2 = Color(hex: 0x222327)   // group headers, selected rows, controls
+    static let border   = Color(hex: 0x2B2C31)
+    static let hairline = Color(hex: 0x1F2024)
+    static let text     = Color(hex: 0xEDEEF0)
+    static let dim      = Color(hex: 0x8A8D95)
+    static let faint    = Color(hex: 0x5D6068)
+    static let accent   = Color(hex: 0x5E6AD2)   // indigo: primary actions, selection, "contained"
+    static let green    = Color(hex: 0x4CB782)
+    static let blue     = Color(hex: 0x4EA7FC)
+    static let purple   = Color(hex: 0xA38BFA)
+    static let yellow   = Color(hex: 0xF2C94C)
+    static let orange   = Color(hex: 0xF2994A)
+    static let red      = Color(hex: 0xEB5757)
+}
+
+/// Interface text: SF Pro at Linear-like sizes
+func uiFont(_ size: CGFloat, _ w: Font.Weight = .regular) -> Font { .system(size: size, weight: w) }
+/// IDs, paths and commands
+func codeFont(_ size: CGFloat, _ w: Font.Weight = .regular) -> Font { .system(size: size, weight: w, design: .monospaced) }
+
+/// Switch in the accent colour. NSSwitch ignores .tint and turns grey when its window isn't key.
+struct ThemeSwitch: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button { configuration.isOn.toggle() } label: {
             ZStack(alignment: configuration.isOn ? .trailing : .leading) {
-                Capsule().fill(configuration.isOn ? DT.green : DT.border)
-                Circle().fill(Color.white).frame(width: 16, height: 16).padding(2)
-                    .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+                Capsule().fill(configuration.isOn ? DT.accent : DT.surface2)
+                    .overlay(Capsule().strokeBorder(configuration.isOn ? Color.clear : DT.border))
+                Circle().fill(Color.white).frame(width: 14, height: 14).padding(2)
+                    .shadow(color: .black.opacity(0.35), radius: 1, y: 0.5)
             }
-            .frame(width: 34, height: 20)
-            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: configuration.isOn)
+            .frame(width: 30, height: 18)
+            .animation(.spring(response: 0.22, dampingFraction: 0.85), value: configuration.isOn)
         }
         .buttonStyle(.plain)
         .accessibilityValue(configuration.isOn ? "on" : "off")
@@ -260,68 +291,47 @@ private struct GreenSwitch: ToggleStyle {
     }
 }
 
-private struct Panel<Content: View>: View {
-    @ViewBuilder var content: Content
+/// Bastion's mark: the shield on a rounded square, tinted by posture.
+struct BrandMark: View {
+    var size: CGFloat = 20
+    var tint: Color = DT.green
     var body: some View {
-        content.frame(maxWidth: .infinity)
-            .background(DT.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(DT.border, lineWidth: 1))
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .fill(LinearGradient(colors: [tint, tint.opacity(0.62)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            Image(systemName: "checkmark.shield.fill").font(.system(size: size * 0.56, weight: .bold)).foregroundStyle(.white)
+        }.frame(width: size, height: size)
     }
 }
 
-private struct StatTile: View {
-    let value: String, label: String, systemImage: String, tint: Color, loading: Bool
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: systemImage).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
-            if loading { ProgressView().controlSize(.small).frame(height: 22) }
-            else { Text(value).font(monoFont(19, .bold)).foregroundStyle(DT.text).contentTransition(.numericText()).frame(height: 22) }
-            Text(label).font(monoFont(8.5, .medium)).foregroundStyle(DT.dim).textCase(.lowercase)
-        }
-        .frame(maxWidth: .infinity).padding(.vertical, 12)
-        .background(DT.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(DT.border, lineWidth: 1))
-    }
-}
-
-private struct Section<Content: View>: View {
-    let title: String
-    @ViewBuilder var content: Content
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("// \(title)").font(monoFont(10, .medium)).foregroundStyle(DT.dim).padding(.leading, 4)
-            VStack(spacing: 0) { content }
-                .background(DT.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(DT.border, lineWidth: 1))
-        }
-    }
-}
-private struct RowDivider: View { var body: some View { Rectangle().fill(DT.border).frame(height: 1).padding(.leading, 44) } }
+// MARK: - Menu-bar panel (glanceable; the window holds the detail)
 
 struct PanelView: View {
     @ObservedObject var model: GuardModel
-    @State private var tab = 0
+    @Environment(\.openWindow) private var openWindow
     @State private var reposOnly = false
     @State private var ticker: Timer?
-    private var accent: Color { model.clean ? DT.green : DT.orange }
+    private var tint: Color { model.clean ? DT.green : DT.orange }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 15) {
-                header
-                hero
-                stats
-                scanButton
-                Picker("", selection: $tab.animation(.easeInOut)) {
-                    Text("overview").tag(0); Text("activity").tag(1); Text("quarantine").tag(2)
-                }.pickerStyle(.segmented).labelsHidden().font(monoFont(11))
-                Group { switch tab { case 0: VStack(spacing: 15) { overview; agents }; case 1: activity; default: quarantine } }
-                footer
+        VStack(spacing: 0) {
+            header
+            Rectangle().fill(DT.hairline).frame(height: 1)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    status
+                    if !model.incidentId.isEmpty { incident }
+                    stats
+                    scan
+                    protection
+                    recent
+                }.padding(14)
             }
-            .padding(16)
+            Rectangle().fill(DT.hairline).frame(height: 1)
+            footer
         }
-        .frame(width: 372).frame(maxHeight: 720)
-        .background(DT.bg)
+        .frame(width: 360).frame(maxHeight: 660)
+        .background(DT.panel)
         .environment(\.colorScheme, .dark)
         .animation(.easeInOut(duration: 0.2), value: model.clean)
         .onAppear {
@@ -332,184 +342,175 @@ struct PanelView: View {
         .onDisappear { ticker?.invalidate(); ticker = nil }
     }
 
+    private func openMain(_ pane: Pane, incident: String? = nil) {
+        if let incident { Router.shared.open(incident: incident) } else { Router.shared.go(pane) }
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private var header: some View {
-        HStack(spacing: 9) {
-            Circle().fill(accent).frame(width: 9, height: 9).shadow(color: accent.opacity(0.7), radius: 4)
-            Text("bastion").font(monoFont(16, .bold)).foregroundStyle(DT.text)
-            Text("v\(model.version)").font(monoFont(10)).foregroundStyle(DT.dim)
+        HStack(spacing: 8) {
+            BrandMark(size: 20, tint: tint)
+            Text("Bastion").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
+            Text("v\(model.version)").font(uiFont(11)).foregroundStyle(DT.faint)
             Spacer()
-            Text(model.clean ? "PROTECTED" : "\(model.activeThreats) THREAT\(model.activeThreats == 1 ? "" : "S")")
-                .font(monoFont(9.5, .bold)).padding(.horizontal, 9).padding(.vertical, 4)
-                .background(accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(accent.opacity(0.4)))
-                .foregroundStyle(accent)
+            Button { openMain(.overview) } label: {
+                HStack(spacing: 5) {
+                    Text("Open").font(uiFont(12, .medium))
+                    Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold))
+                }.foregroundStyle(DT.dim).padding(.horizontal, 8).frame(height: 24)
+                .background(DT.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(DT.border))
+            }.buttonStyle(.plain).help("Open the Bastion window")
+        }.padding(.horizontal, 14).frame(height: 46)
+    }
+
+    private var status: some View {
+        HStack(spacing: 12) {
+            BrandMark(size: 38, tint: tint).shadow(color: tint.opacity(0.35), radius: 6, y: 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.clean ? "You're protected" : "\(model.activeThreats) active threat\(model.activeThreats == 1 ? "" : "s")")
+                    .font(uiFont(15, .semibold)).foregroundStyle(DT.text)
+                Text("Last scan \(model.lastScan) · \(model.lastResult.lowercased())").font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
+            }
+            Spacer(minLength: 0)
         }
     }
 
-    private var hero: some View {
-        Panel {
-            HStack(spacing: 13) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(LinearGradient(colors: [accent.opacity(0.9), accent.opacity(0.55)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 48, height: 48).shadow(color: accent.opacity(0.4), radius: 6, y: 2)
-                    Image(systemName: model.clean ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                        .font(.system(size: 22, weight: .bold)).foregroundStyle(.white).contentTransition(.symbolEffect(.replace))
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.clean ? "no threats detected" : "threats need attention")
-                        .font(monoFont(14, .semibold)).foregroundStyle(DT.text)
-                    Text("last scan \(model.lastScan.lowercased()) · \(model.lastResult.lowercased())")
-                        .font(monoFont(10)).foregroundStyle(DT.dim).lineLimit(1)
+    private var incident: some View {
+        Button { openMain(.incidents, incident: model.incidentId) } label: {
+            HStack(spacing: 10) {
+                PanelStatusDot(open: model.incidentStatus != "contained")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.incidentStatus == "contained" ? "Attack contained" : "Incident needs you").font(uiFont(12.5, .semibold)).foregroundStyle(DT.text)
+                    Text("\(model.incidentTodos) to-do\(model.incidentTodos == 1 ? "" : "s") · \(model.incidentId)").font(codeFont(10.5)).foregroundStyle(DT.dim)
                 }
                 Spacer()
-            }.padding(15)
-        }
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.faint)
+            }
+            .padding(10).contentShape(Rectangle())
+            .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(model.incidentStatus == "contained" ? DT.accent.opacity(0.5) : DT.orange.opacity(0.5)))
+        }.buttonStyle(.plain)
     }
 
     private var stats: some View {
-        HStack(spacing: 9) {
-            StatTile(value: "\(model.reposMonitored)", label: "repos", systemImage: "folder.fill", tint: DT.blue, loading: model.statsLoading)
-            StatTile(value: "\(model.configsMonitored)", label: "configs", systemImage: "doc.text.fill", tint: DT.purple, loading: model.statsLoading)
-            StatTile(value: "\(model.quarantineCount)", label: "locked", systemImage: "lock.fill", tint: model.quarantineCount > 0 ? DT.orange : DT.dim, loading: false)
+        HStack(spacing: 0) {
+            stat(model.statsLoading ? "–" : "\(model.reposMonitored)", "Repos")
+            Rectangle().fill(DT.hairline).frame(width: 1)
+            stat(model.statsLoading ? "–" : "\(model.configsMonitored)", "Configs")
+            Rectangle().fill(DT.hairline).frame(width: 1)
+            stat("\(model.quarantineCount)", "Quarantined", warn: model.quarantineCount > 0)
         }
+        .frame(height: 54)
+        .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
     }
 
-    private var scanButton: some View {
-        VStack(spacing: 8) {
-            Button(action: { model.scanNow(reposOnly: reposOnly) }) {
-                HStack(spacing: 7) {
-                    if model.scanning { ProgressView().controlSize(.small) } else { Image(systemName: "magnifyingglass") }
-                    Text(model.scanning ? "scanning…" : "$ scan now").font(monoFont(13, .semibold))
+    private func stat(_ value: String, _ label: String, warn: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(uiFont(11)).foregroundStyle(DT.dim)
+            Text(value).font(uiFont(16, .semibold)).foregroundStyle(warn ? DT.orange : DT.text).contentTransition(.numericText())
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
+    }
+
+    private var scan: some View {
+        HStack(spacing: 10) {
+            Button { model.scanNow(reposOnly: reposOnly) } label: {
+                HStack(spacing: 6) {
+                    if model.scanning { ProgressView().controlSize(.small).scaleEffect(0.7).tint(.white) } else { Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)) }
+                    Text(model.scanning ? "Scanning…" : "Scan now").font(uiFont(12.5, .semibold))
                 }
-                .frame(maxWidth: .infinity).padding(.vertical, 11)
-                .background(LinearGradient(colors: [accent, accent.opacity(0.78)], startPoint: .top, endPoint: .bottom),
-                            in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                .foregroundStyle(Color.black.opacity(0.85))
-                .shadow(color: accent.opacity(0.35), radius: 5, y: 2)
-            }
-            .buttonStyle(.plain).disabled(model.scanning)
-            Toggle(isOn: $reposOnly) { Text("git repos only (faster)").font(monoFont(10)).foregroundStyle(DT.dim) }
-                .toggleStyle(.checkbox).controlSize(.small)
+                .foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 30)
+                .background(DT.accent.opacity(model.scanning ? 0.6 : 1), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }.buttonStyle(.plain).disabled(model.scanning)
+            Toggle(isOn: $reposOnly) { Text("Repos only").font(uiFont(11.5)).foregroundStyle(DT.dim) }
+                .toggleStyle(.checkbox).controlSize(.small).help("Scan only git repositories (faster)")
         }
     }
 
-    private func row<Trailing: View>(_ icon: String, _ tint: Color, _ title: String, @ViewBuilder trailing: () -> Trailing) -> some View {
-        HStack(spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(tint.opacity(0.16)).frame(width: 28, height: 28)
-                Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
+    private var protection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Protection").font(uiFont(11.5, .medium)).foregroundStyle(DT.faint)
+            VStack(spacing: 0) {
+                toggleRow("Real-time watcher", on: model.watcherOn, busy: model.applying == "watcher") { model.toggleWatcher($0) }
+                divider
+                toggleRow("Scheduled scan · 6h", on: model.scheduleOn, busy: model.applying == "schedule") { model.toggleSchedule($0) }
+                divider
+                toggleRow("Execution guard", on: model.executionGuardOn, busy: model.applying == "guard-exec") { model.toggleExecutionGuard($0) }
+                divider
+                toggleRow("Auto-respond", on: model.autonomy == "contain", busy: model.applying == "autonomy") { model.setAutonomy($0) }
+                if model.gitReposUnprotected > 0 {
+                    divider
+                    Button { model.installGitGuard() } label: {
+                        HStack {
+                            Text("Protect \(model.gitReposUnprotected) repo\(model.gitReposUnprotected == 1 ? "" : "s") on push").font(uiFont(12.5)).foregroundStyle(DT.orange)
+                            Spacer()
+                            if model.applying == "guard" { ProgressView().controlSize(.small).scaleEffect(0.6) }
+                            else { Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.faint) }
+                        }.padding(.horizontal, 12).frame(height: 34).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(model.applying == "guard")
+                }
             }
-            Text(title).font(monoFont(12)).foregroundStyle(DT.text)
+            .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
+        }
+    }
+
+    private var divider: some View { Rectangle().fill(DT.hairline).frame(height: 1).padding(.leading, 12) }
+
+    private func toggleRow(_ title: String, on: Bool, busy: Bool, _ set: @escaping (Bool) -> Void) -> some View {
+        HStack {
+            Text(title).font(uiFont(12.5)).foregroundStyle(DT.text)
             Spacer()
-            trailing()
-        }.padding(.horizontal, 11).padding(.vertical, 9).contentShape(Rectangle())
+            if busy { ProgressView().controlSize(.small).scaleEffect(0.6) }
+            Toggle(title, isOn: Binding(get: { on }, set: set)).labelsHidden().toggleStyle(ThemeSwitch())
+        }.padding(.horizontal, 12).frame(height: 34)
     }
 
-    private var overview: some View {
-        Section(title: "protection") {
-            row("bolt.fill", DT.green, "real-time watcher") {
-                HStack(spacing: 6) {
-                    if model.applying == "watcher" { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                    Toggle("real-time watcher", isOn: Binding(get: { model.watcherOn }, set: { model.toggleWatcher($0) })).labelsHidden().toggleStyle(GreenSwitch())
+    private var recent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Recent activity").font(uiFont(11.5, .medium)).foregroundStyle(DT.faint)
+                Spacer()
+                Button("View all") { openMain(.activity) }.buttonStyle(.plain).font(uiFont(11.5, .medium)).foregroundStyle(DT.dim)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                if model.history.isEmpty {
+                    Text("Nothing yet — all quiet.").font(uiFont(12)).foregroundStyle(DT.dim).padding(12)
+                }
+                ForEach(Array(model.history.prefix(4).enumerated()), id: \.offset) { i, line in
+                    if i > 0 { divider }
+                    let parts = line.components(separatedBy: "  ")
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Circle().fill(line.contains("KILLED") ? DT.red : line.contains("QUARANTINED") || line.contains("ALERT") ? DT.orange : DT.faint).frame(width: 6, height: 6)
+                        Text(humanizeEvent(parts.dropFirst().joined(separator: "  ").trimmingCharacters(in: .whitespaces))).font(uiFont(12)).foregroundStyle(DT.text.opacity(0.9)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(ago(parts.first)).font(uiFont(11)).foregroundStyle(DT.faint)
+                    }.padding(.horizontal, 12).frame(height: 32)
                 }
             }
-            RowDivider()
-            row("clock.fill", DT.blue, "scheduled scan · 6h") {
-                HStack(spacing: 6) {
-                    if model.applying == "schedule" { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                    Toggle("scheduled scan", isOn: Binding(get: { model.scheduleOn }, set: { model.toggleSchedule($0) })).labelsHidden().toggleStyle(GreenSwitch())
-                }
-            }
-            RowDivider()
-            row("lock.shield.fill", DT.purple, "execution guard") {
-                HStack(spacing: 6) {
-                    if model.applying == "guard-exec" { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                    Toggle("execution guard", isOn: Binding(get: { model.executionGuardOn }, set: { model.toggleExecutionGuard($0) })).labelsHidden().toggleStyle(GreenSwitch())
-                }
-            }
-            RowDivider()
-            if model.gitReposUnprotected > 0 {
-                Button(action: { model.installGitGuard() }) {
-                    row("hand.raised.fill", DT.orange, "protect \(model.gitReposUnprotected) repo\(model.gitReposUnprotected == 1 ? "" : "s")") {
-                        if model.applying == "guard" { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                        else { Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.dim) }
-                    }
-                }.buttonStyle(.plain).disabled(model.applying == "guard")
-            } else {
-                row("checkmark.seal.fill", DT.green, "all git repos protected") { EmptyView() }
-            }
-        }
-    }
-
-    private var agents: some View {
-        Section(title: "ai agents") {
-            if model.agentLinked {
-                row("sparkles", DT.green, "agent connected · mcp") {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(DT.green)
-                }
-                .help("Bastion is registered as an MCP server, so your AI agent checks projects before running them.")
-            } else {
-                row("sparkles", DT.blue, "connect claude code") {
-                    Button(action: { model.copyAgentSetup() }) {
-                        Text(model.agentCopied ? "copied ✓" : "copy cmd").font(monoFont(10, .semibold))
-                    }.buttonStyle(.plain).foregroundStyle(model.agentCopied ? DT.green : DT.blue)
-                }
-                .help("Copies the command that plugs Bastion into Claude Code as an MCP server. Paste it in a terminal. For Cursor, Codex and others, run: bastion connect")
-            }
-        }
-    }
-
-    private var activity: some View {
-        Section(title: "activity.log") {
-            if model.history.isEmpty {
-                row("checkmark.circle.fill", DT.green, "no activity — all clear") { EmptyView() }
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(Array(model.history.prefix(40).enumerated()), id: \.offset) { i, line in
-                            if i > 0 { RowDivider() }
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: line.contains("KILLED") ? "bolt.shield.fill" : line.contains("QUARANTINED") ? "lock.fill" : "chevron.right")
-                                    .font(.system(size: 10)).foregroundStyle(line.contains("KILLED") ? DT.red : line.contains("QUARANTINED") ? DT.orange : DT.dim).padding(.top, 2)
-                                Text(line).font(monoFont(9.5)).foregroundStyle(DT.dim).textSelection(.enabled).lineLimit(3)
-                                Spacer(minLength: 0)
-                            }.padding(.horizontal, 11).padding(.vertical, 7)
-                        }
-                    }
-                }.frame(height: 150)
-            }
-        }
-    }
-
-    private var quarantine: some View {
-        Section(title: "quarantine") {
-            if model.quarantineItems.isEmpty {
-                row("lock.open.fill", DT.dim, "nothing quarantined") { EmptyView() }
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(Array(model.quarantineItems.enumerated()), id: \.element.path) { i, item in
-                            if i > 0 { RowDivider() }
-                            row("lock.doc.fill", DT.orange, item.name) {
-                                Button("reveal") { model.reveal(item.path) }.buttonStyle(.plain).font(monoFont(10, .semibold)).foregroundStyle(DT.blue)
-                            }
-                        }
-                    }
-                }.frame(height: 150)
-            }
+            .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
         }
     }
 
     private var footer: some View {
         HStack(spacing: 14) {
-            Button(action: { model.reveal("\(model.dir)/logs") }) { Text("logs").font(monoFont(10)) }.buttonStyle(.plain).foregroundStyle(DT.blue)
-            Button(action: { model.openRepo() }) { Text("github").font(monoFont(10)) }.buttonStyle(.plain).foregroundStyle(DT.blue)
+            Button("Logs") { model.reveal("\(model.dir)/logs") }
+            Button("GitHub") { model.openRepo() }
             Spacer()
-            Button(action: { model.refreshFast(); model.loadStats(force: true) }) { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).foregroundStyle(DT.dim).font(.system(size: 11))
-            Button(action: { NSApp.terminate(nil) }) { Image(systemName: "power") }.buttonStyle(.plain).foregroundStyle(DT.dim).font(.system(size: 11))
-        }.padding(.top, 2)
+            Button { model.refreshFast(); model.loadStats(force: true) } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
+            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Bastion")
+        }
+        .buttonStyle(.plain).font(uiFont(11.5, .medium)).foregroundStyle(DT.dim)
+        .padding(.horizontal, 14).frame(height: 36)
     }
+}
+
+private struct PanelStatusDot: View {
+    let open: Bool
+    var body: some View { StatusIcon(status: open ? "open" : "contained", size: 16) }
 }
 
 @main
@@ -519,7 +520,11 @@ struct BastionApp: App {
         MenuBarExtra {
             PanelView(model: model)
         } label: {
-            Image(systemName: model.clean ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+            Image(systemName: model.clean && model.incidentStatus != "open" ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
         }.menuBarExtraStyle(.window)
+        Window("Bastion", id: "main") { MainWindow() }
+            .windowStyle(.hiddenTitleBar)
+            .defaultSize(width: 1180, height: 780)
+            .windowResizability(.contentMinSize)
     }
 }

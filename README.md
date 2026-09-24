@@ -4,16 +4,16 @@
 
 # Bastion
 
-**Stops hidden malware in your JavaScript projects before it runs — for you and for your AI coding agent.**
+**An agentic security tool for developers. It stops hidden malware in your JavaScript projects before it runs — and when something gets in, it investigates, contains it and tells you exactly what's left to do.**
 
-A tiny macOS menu-bar app, a command-line tool and an MCP server, in one download.
+A macOS app, a command-line tool and an MCP server for your AI coding agent, in one download.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-6-orange)
 ![MCP](https://img.shields.io/badge/MCP-server-8A2BE2)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-<img src="assets/panel-preview.png" width="360" alt="Bastion panel"/>
+<img src="assets/window-overview.png" width="820" alt="The Bastion window"/>
 
 </div>
 
@@ -27,21 +27,20 @@ Attackers have started hiding malware in the ordinary files of npm/JavaScript pr
 
 Once it runs, it quietly steals your tokens, browser sessions and saved passwords, then phones home.
 
-**Bastion is a small, always-on guard for developers that catches this.** It lives in your menu bar as a
-shield: **green means you're safe, orange means something needs your attention.** It also plugs straight
-into AI coding agents like Claude Code, Cursor and Codex, so they check a project *before* they run anything in it.
-
-It doesn't chase one exact virus, because attackers change the code constantly. It spots the *shape* of the
-trick, so it catches new variants too.
+**Bastion is an always-on guard for developers that catches this — and then acts on it.** It spots the
+*shape* of the trick rather than one exact virus, so it catches new variants too. When it finds something,
+it works the incident the way a security engineer would: which commit brought the payload in and who
+committed it, whether it ever ran, which branches carry it, what else that identity touched. Then it fixes
+what it can prove and hands you a short to-do list for the rest.
 
 ## Why you'd want it
 
 - 🛡️ **Blocks it before it runs** — refuses to start a dev server or an install when a project has been tampered with.
-- 🤖 **Keeps your AI agent safe too** — agents ask Bastion "is this repo safe to run?" before `npm install` or `npm run dev`.
-- ⚡ **Catches it in real time** — a background watcher kills malicious processes and connections within seconds.
-- 🔒 **Cleans up safely** — quarantines the junk it finds (you can put it back). It never edits your code; it tells you what to fix.
-- 🧠 **Doesn't cry wolf** — an allowlist for your own servers and an ignore list for docs and tests keep false alarms away.
-- 🙈 **Stays out of your way** — no Dock icon, no window, just a shield in the menu bar.
+- 🧠 **Responds on its own** — investigates, removes injected code it can prove the attacker added, stops loaders, quarantines leftovers and blocks attacker servers.
+- 📋 **Tells you what's left** — commit the fix, clean the pushed branches, remove the attacker's access, rotate the secrets that were exposed. With the exact commands.
+- 🤖 **Keeps your AI agent safe too** — agents ask Bastion "is this repo safe to run?" before `npm install` or `npm run dev`, and can hand it an incident to work.
+- ↩️ **Never destructive** — nothing is deleted, every file change has an undo, and commits, pushes and access changes are always left to you.
+- 🧘 **Doesn't cry wolf** — an allowlist for your own servers and an ignore list for docs and tests keep false alarms away.
 
 ## Install
 
@@ -57,27 +56,64 @@ cd bastion
 bash build.sh      # builds Bastion.app, the bastion CLI and a .dmg
 bash install.sh    # turns on the background protection
 ```
-Want just one part? `install.sh --scan` (periodic scan only) or `install.sh --watch` (live watcher only).
 
 **Where to find it afterwards**
 
-- The 🛡 shield sits in your menu bar, at the top-right of the screen.
+- The 🛡 shield sits in your menu bar, at the top-right of the screen. Click it for a quick look; click
+  **Open** for the full window.
 - The `bastion` command lives at `~/.security-guard/bin/bastion`. To type just `bastion`, add it to your PATH once:
   ```bash
   echo 'export PATH="$HOME/.security-guard/bin:$PATH"' >> ~/.zshrc
   ```
 
+## How Bastion responds
+
+When the watcher or a scan finds something, Bastion's responder runs on its own:
+
+1. **Investigate** — a fresh scan, then git history for every infected file: the last clean version, the
+   commit and identity that planted the payload, and every branch (local and pushed) that carries it.
+   It checks whether the payload ran (leftovers on disk, killed loaders, the payload in a build cache) and
+   hunts for other commits by the same identity across all your repos.
+2. **Contain** — only steps it can prove and undo:
+   - removes the injected code, but only when the file then matches its last clean commit **byte for byte**
+     (a copy of the infected file is kept; `bastion undo` puts it back);
+   - stops loaders, and dev servers that started after the payload arrived;
+   - quarantines leftovers (moved aside, never deleted);
+   - blocks attacker addresses found in the payload itself.
+3. **Verify** — scans again to confirm.
+4. **Report** — an incident with what happened, whether it ran, what Bastion did, and your to-dos with the
+   exact commands.
+
+<div align="center"><img src="assets/window-incident.png" width="820" alt="An incident in Bastion"/></div>
+
+It will **never** commit, push, delete a branch, change anyone's access or touch a file with your own
+unsaved edits in it — those become to-dos. Choose how much it does on its own in **Settings → Auto-respond**:
+**Contain** (default), **Observe** (investigate and report only) or **Off**.
+
+## The app
+
+- **Menu-bar panel** — a quick look: status, the current incident, and switches for each protection.
+- **The window** — everything else, in a keyboard-first layout:
+  - **Overview** — are you protected, the open incident, and every protection switch.
+  - **Incidents** — grouped by status; each one opens into the full investigation, to-dos and timeline.
+  - **Repositories** — every git repo, its health and push guard; check one before you run it.
+  - **Activity** — everything Bastion caught, blocked or changed, by day.
+  - **Quarantine**, **AI agents** and **Settings** (auto-respond, protections, your lists).
+  - **⌘K** opens the command menu; **⌘1–7** jump between pages.
+
+<div align="center"><img src="assets/panel-preview.png" width="300" alt="Bastion menu-bar panel"/></div>
+
 ## Use it with AI agents
 
 Bastion is an [MCP](https://modelcontextprotocol.io) server, so any agent that speaks MCP can use it.
 
-**Claude Code** — run this once, or click **copy cmd** under *ai agents* in the panel:
+**Claude Code** — run this once:
 ```bash
 claude mcp add --scope user bastion -- ~/.security-guard/bin/bastion mcp
 ```
 
 **Cursor, Claude Desktop, Windsurf** — add Bastion to the `mcpServers` section of the app's MCP config
-(for Cursor that's `~/.cursor/mcp.json`). Use your full home path; `bastion connect` prints it for you:
+(for Cursor that's `~/.cursor/mcp.json`). Use your full home path; the **AI agents** page shows it for you:
 ```json
 { "mcpServers": { "bastion": { "command": "/Users/you/.security-guard/bin/bastion", "args": ["mcp"] } } }
 ```
@@ -90,25 +126,22 @@ args = ["mcp"]
 ```
 
 Once it's connected, your agent is told to check a repository before running `install`, `dev`, `build`,
-`test` or codegen in it, and to stop and show you the problem if the project isn't safe.
-
-**What your agent gets**
+`test` or codegen in it, and to hand anything suspicious to Bastion's responder.
 
 | Tool | What it does |
 | --- | --- |
 | `bastion_check_path` | "Is it safe to run npm here?" — checks one project, usually in under a second |
-| `bastion_status` | Is this Mac protected right now? Active threats and which protections are on |
-| `bastion_scan` | Sweeps all your repos plus temp folders, processes and network; quarantines known junk |
-| `bastion_findings` | The last scan's findings, each with a plain explanation and the exact fix |
-| `bastion_activity` | What Bastion caught or changed recently |
-| `bastion_quarantine` | What's locked away, and where it came from |
-| `bastion_lists` | Your allowlist, blocklist and ignore list |
-| `bastion_enable` | Turns a protection **on**: watcher, scheduled scan, execution guard or git push guard |
+| `bastion_respond` | Investigates, contains what it can prove (with undo) and returns an incident report |
+| `bastion_incidents` · `bastion_incident` | Incident history and full reports |
+| `bastion_status` | Is this Mac protected right now? |
+| `bastion_scan` | Sweeps every repo plus temp folders, processes and network |
+| `bastion_findings` · `activity` · `quarantine` · `lists` | Everything else Bastion knows, read-only |
+| `bastion_enable` | Turns a protection **on** (watcher, scheduled scan, execution guard, git push guard, auto-respond) |
+| `bastion_block_indicator` | Blocks an attacker address — only when an incident found it in malware on this Mac |
 
 **Agents can make you safer, never less safe.** There's no tool to switch protection off, trust a host,
-ignore a path, edit the blocklist or restore quarantined files, so a confused or tricked agent can't do
-those things either. They're yours, from the command line, and they ask you to confirm. Every change is
-written to the activity log and shows a notification.
+ignore a path, unblock an address or restore quarantined files, so a confused or tricked agent can't do
+those things either. They're yours, and they ask you to confirm. Every change is logged and announced.
 
 > Honest note: an agent that can run shell commands has your permissions and could, in principle, remove
 > Bastion itself. Bastion makes lowering protection explicit and loud rather than impossible.
@@ -119,33 +152,22 @@ written to the activity log and shows a notification.
 bastion status                  # is this Mac protected right now?
 bastion check                   # is it safe to run install/dev/build in this folder?
 bastion scan                    # scan all your git repos (--full scans your whole home folder)
-bastion findings                # details and fixes from the last scan
+bastion respond                 # investigate and contain an attack (--plan: investigate only)
+bastion incidents               # incident history · incident [id] shows the report
+bastion undo [id]               # put back files Bastion cleaned, if it got one wrong
+bastion autonomy observe        # contain (default) · observe · off
+bastion repos                   # your git repos: branch, push guard, open findings
 bastion activity                # what Bastion caught or changed recently
-bastion quarantine              # what's locked away (quarantine restore <id> puts a batch back)
-bastion enable watcher          # or schedule, exec-guard, git-guard; "disable" turns one off
+bastion enable watcher          # or schedule, exec-guard, git-guard, auto-respond; "disable" turns one off
 bastion allow add api.mycompany.com   # trust your own server
-bastion connect                 # setup snippets for Claude Code, Cursor, Codex and others
 ```
 
 Add `--json` to any command for machine-readable output. Exit codes: `0` all good · `2` threats found ·
 `1` error, so `bastion check && npm install` works in scripts and CI.
 
-## The menu-bar panel
-
-Click the shield to open it:
-
-- **Status card** — safe or not, and when it last scanned.
-- **Repos / Configs / Locked** — how much it's watching, and what it has quarantined.
-- **Scan now** — check everything on demand (tick *git repos only* for a faster pass).
-- **Protection** — switches for the real-time watcher, the scheduled scan and the execution guard, plus
-  one-click "protect my repos" (adds a git hook that blocks pushing infected configs).
-- **AI agents** — copies the command that connects Bastion to Claude Code.
-- **Activity** — a log of everything it has caught or changed.
-- **Quarantine** — the suspicious items it has isolated, with a Reveal button.
-
 ## Make it yours
 
-Bastion reads three small text files in `~/.security-guard/`. Edit them directly, or use the commands:
+Bastion reads three small text files in `~/.security-guard/`. Edit them in **Settings**, directly, or with the commands:
 
 - **`allowlist.txt`** — your own servers and APIs, so their traffic is never mistaken for a threat (`bastion allow add …`).
 - **`blocklist.txt`** — known-bad IP addresses; ships with known attacker servers (`bastion block add …`).
@@ -154,14 +176,17 @@ Bastion reads three small text files in `~/.security-guard/`. Edit them directly
 
 One entry per line; `#` starts a comment. Updates never overwrite your lists; new known-bad addresses are merged in.
 
-## How it works (three layers)
+## How it works (four layers)
 
 1. **Prevent** — command guards refuse to run `dev`, `build` or `install` in a tampered project, and a git
    hook blocks pushing an infected config.
 2. **Detect & stop** — a watcher checks every ~12 seconds, kills malware loaders and connections to known
    attacker servers, and quarantines what they leave behind.
-3. **Scan** — a structural scan of your projects (config files, source files, `package.json` install hooks
+3. **Respond** — the responder investigates, contains what it can prove and writes the incident report.
+4. **Scan** — a structural scan of your projects (config files, source files, `package.json` install hooks
    and `.vscode` auto-run tasks) on demand, at login and every few hours.
+
+Everything runs on your Mac. Nothing is uploaded.
 
 ## Honest limits
 
@@ -169,8 +194,8 @@ One entry per line; `#` starts a comment. Updates never overwrite your lists; ne
   antivirus. Keep a general scanner around too.
 - It checks **your project's own** install hooks, not the hooks of every dependency deep in `node_modules`.
   `npm install --ignore-scripts` is the belt-and-braces option.
-- It protects **your machine**. If malicious code keeps arriving in a shared repo, fix it at the source
-  (revoke the bad access, rotate credentials).
+- It protects **your machine**. If malicious code keeps arriving in a shared repo, fix it at the source —
+  the incident's to-dos show you where.
 - It's **self-signed**, so the first launch shows an "unidentified developer" prompt (right-click → Open gets past it).
 
 ## Uninstall
