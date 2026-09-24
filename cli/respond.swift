@@ -99,8 +99,11 @@ func findingStillThere(_ f: [String: Any]) -> Bool {
         let spec = (f["detail"] as? String ?? "").split(separator: " ").first.map(String.init) ?? ""
         return lockedPackages((path as NSString).deletingLastPathComponent).packages.contains { "\($0.name)@\($0.version)" == spec }
     case "infected_branch":
-        guard let ref = f["ref"] as? String, let file = f["file"] as? String, let blob = gitData(path, ["cat-file", "-p", "\(ref):\(file)"]) else { return false }
-        return !payloadReasons(blob, config: true).isEmpty
+        guard let ref = f["ref"] as? String, let file = f["file"] as? String,
+              let blob = git(path, ["rev-parse", "--verify", "-q", "\(ref):\(file)"])?.trimmed, !blob.isEmpty else { return false }
+        if let v = SCAN_CACHE.verdict(blob) { return !v.isEmpty }
+        guard let data = gitData(path, ["cat-file", "-p", blob]) else { return false }
+        return !payloadReasons(data, config: true).isEmpty
     default: return true
     }
     return run("/bin/bash", ["-c", #". "$HOME/.security-guard/lib.sh" && "$0" "$1""#, check, path], timeout: 20).code == 0
@@ -389,7 +392,24 @@ func incidentBrief(_ i: [String: Any]) -> [String: Any] {
 
 // MARK: - The response loop
 
-func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throws -> [String: Any] {
+/// Right now, not at scan time: processes and connections are checked live, everything else with findingStillThere.
+func stillThereNow(_ f: [String: Any]) -> Bool {
+    switch f["kind"] as? String ?? "" {
+    case "loader_process":
+        let pids = ((f["pid"] as? Int).map(String.init) ?? (f["pid"] as? String) ?? (f["path"] as? String) ?? "").split(separator: ",")
+        return pids.contains { Int32($0.trimmed).map { kill($0, 0) == 0 } ?? false }
+    case "c2_connection":
+        let ip = f["ip"] as? String ?? f["path"] as? String ?? ""
+        return liveC2().contains { $0["ip"] as? String == ip }
+    default: return findingStillThere(f)
+    }
+}
+
+func branchKey(_ f: [String: Any]) -> String {
+    "\(f["path"] as? String ?? "")|\(f["ref"] as? String ?? "")|\(f["file"] as? String ?? "")|\(f["commit"] as? String ?? "")"
+}
+
+func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromLog: String? = nil) throws -> [String: Any] {
     try requireEngine()
     let level = autonomy()
     if (trigger == "watcher" || trigger == "scan") && level == "off" {
@@ -402,17 +422,32 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throw
 
     let now = Date()
     let lastRun = parseISO(settings()["last_respond"])
-    let roots = paths.isEmpty ? repoRoots() : try paths.map(resolveDir)
-
-    // 1. OBSERVE — fresh read-only scan, plus what the watcher did since the last response
-    let found = parseFindings(run("/bin/bash", [engine("scanner.sh")] + (roots.isEmpty ? [HOME] : roots), timeout: 1800).out)
+    // 1. OBSERVE — the scan that just ran (when a scan started this), or a fresh read-only scan; plus what the watcher did
+    let found: [[String: Any]]
+    if let log = fromLog, let m = (try? fm.attributesOfItem(atPath: log))?[.modificationDate] as? Date, Date().timeIntervalSince(m) < 600 {
+        found = (parseScanLog(log)["findings"] as? [[String: Any]] ?? []).filter { $0["handled"] == nil }
+    } else {
+        let roots = paths.isEmpty ? repoRoots() : try paths.map(resolveDir)
+        found = parseFindings(run("/bin/bash", [engine("scanner.sh")] + (roots.isEmpty ? [HOME] : roots), timeout: 1800).out)
+    }
     let reflexes = reflexEvents(since: lastRun)
     updateSettings { $0["last_respond"] = isoTime(now) }
     if found.isEmpty && reflexes.isEmpty {
         return ["status": "clear", "mode": mode, "summary": "Nothing to respond to: no findings and no new automatic actions."]
     }
 
-    var inc = currentIncident() ?? newIncident(now)
+    // infected branches that were already reported (and the incident closed) don't open a new incident until they change
+    if trigger == "scan" || trigger == "watcher", reflexes.isEmpty, currentIncident() == nil,
+       found.allSatisfy({ $0["kind"] as? String == "infected_branch" }),
+       let last = allIncidents().first, let known = last["branch_keys"] as? [String],
+       Set(found.map(branchKey)).isSubset(of: Set(known)) {
+        return ["status": "known", "mode": mode, "incident": last["id"] ?? "",
+                "summary": "Nothing new — these infected branches were already reported in \(last["id"] as? String ?? "an earlier incident")."]
+    }
+
+    let existing = currentIncident()
+    var inc = existing ?? newIncident(now)
+    let before = (existing?["status"] as? String ?? "", existing?["summary"] as? String ?? "")
     let id = inc["id"] as? String ?? ""
     let batch = "respond-" + stamp(now)
     var actions = inc["actions"] as? [[String: Any]] ?? []
@@ -422,11 +457,12 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throw
     var machine = inc["machine"] as? [[String: Any]] ?? []
     var signs = inc["ran_signs"] as? [String] ?? []
 
+    var actedNow = 0
     func act(_ type: String, _ target: String, _ status: String, _ detail: String, _ extra: [String: Any] = [:]) {
         var a: [String: Any] = ["n": actions.count + 1, "type": type, "target": target, "status": status, "detail": detail, "time": isoTime(Date())]
         a.merge(extra) { $1 }
         actions.append(a)
-        if status == "done" { timeline.append(["time": isoTime(Date()), "event": detail]) }
+        if status == "done" { actedNow += 1; timeline.append(["time": isoTime(Date()), "event": detail]) }
     }
     func addIndicator(_ value: String, _ type: String, _ source: String) {
         guard !indicators.contains(where: { $0["value"] as? String == value }) else { return }
@@ -648,18 +684,21 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throw
         }
     }
 
-    // 6. VERIFY — scan again and record the result as a scan log, so every view agrees
+    // 6. VERIFY — re-check each finding right now (no second full scan). Nothing changed means the scan is still current.
     let affected = repoCases.compactMap { $0["path"] as? String }.filter { fm.fileExists(atPath: $0) }
-    let remaining = parseFindings(run("/bin/bash", [engine("scanner.sh")] + (affected.isEmpty ? [engine("")] : affected), timeout: 1800).out)
-    let verifyLog = engine("logs/scan-\(stamp(Date())).log")
-    var logText = "=== bastion response \(id) (verify) ===\nroots: \(affected.joined(separator: " "))\n"
-    logText += remaining.isEmpty ? "RESULT: CLEAN\n" : "RESULT: \(remaining.count) FINDING(S)\n"
-    for f in remaining {
-        let code = KINDS.first { $0.value.id == f["kind"] as? String }?.key ?? "CONFIG"
-        logText += "  \(code)|\(f["path"] as? String ?? (f["ip"] as? String) ?? "")|\(f["detail"] as? String ?? "")\n"
+    let remaining = actedNow == 0 ? found : found.filter(stillThereNow)
+    if actedNow > 0 {   // record the result as a scan log, so every view agrees
+        let verifyLog = engine("logs/scan-\(stamp(Date())).log")
+        var logText = "=== bastion response \(id) (verify) ===\nroots: \(affected.joined(separator: " "))\n"
+        logText += remaining.isEmpty ? "RESULT: CLEAN\n" : "RESULT: \(remaining.count) FINDING(S)\n"
+        for f in remaining {
+            let code = KINDS.first { $0.value.id == f["kind"] as? String }?.key ?? "CONFIG"
+            logText += "  \(code)|\(f["path"] as? String ?? (f["ip"] as? String) ?? "")|\(f["detail"] as? String ?? "")\n"
+        }
+        try? logText.write(toFile: verifyLog, atomically: true, encoding: .utf8)
     }
-    try? logText.write(toFile: verifyLog, atomically: true, encoding: .utf8)
-    timeline.append(["time": isoTime(Date()), "event": remaining.isEmpty ? "Verified: a fresh scan is clean." : "Verified: \(remaining.count) problem(s) still need you."])
+    timeline.append(["time": isoTime(Date()), "event": remaining.isEmpty ? "Verified: nothing is left." :
+        actedNow == 0 ? "Nothing to change automatically — \(remaining.count) problem(s) need you." : "Verified: \(remaining.count) problem(s) still need you."])
 
     // 7. REPORT
     let ranLevel: String = !machineFindings.isEmpty || reflexes.contains(where: { ($0["event"] ?? "").contains("KILLED") || ($0["event"] ?? "").contains("QUARANTINED") })
@@ -681,13 +720,14 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throw
     inc["remaining"] = remaining
     inc["todos"] = buildTodos(inc)
     inc["summary"] = buildSummary(inc)
+    inc["branch_keys"] = Array(Set((inc["branch_keys"] as? [String] ?? []) + found.filter { $0["kind"] as? String == "infected_branch" }.map(branchKey))).sorted()
     let report = saveIncident(inc)
 
-    let todoCount = max(((inc["todos"] as? [Any])?.count ?? 1) - 1, 0)
     logEvent("INCIDENT \(id) [\(inc["status"] ?? "")]: \(inc["summary"] as? String ?? "")")
-    notify(inc["status"] as? String == "contained"
-           ? "Contained an attack — \(todoCount) thing\(todoCount == 1 ? "" : "s") for you to do. Open Bastion for the report."
-           : "Found an attack that needs you. Open Bastion for the report.")
+    // tell the user when something changed: a new incident, a new action, or a different outcome — not on every repeat scan
+    if existing == nil || actedNow > 0 || before != (inc["status"] as? String ?? "", inc["summary"] as? String ?? "") {
+        notify((inc["summary"] as? String ?? "Bastion responded.") + " Open Bastion for the report.")
+    }
     var out = inc
     out["report"] = report
     return out
@@ -813,11 +853,18 @@ func buildSummary(_ inc: [String: Any]) -> String {
     let k = done("kill", "stop_process"); if k > 0 { did.append("stopped \(k) process\(k == 1 ? "" : "es")") }
     let q = done("quarantine"); if q > 0 { did.append("quarantined \(q) item\(q == 1 ? "" : "s")") }
     let b = done("block"); if b > 0 { did.append("blocked \(b) address\(b == 1 ? "" : "es")") }
-    let repos = (inc["repos"] as? [Any])?.count ?? 0
+    let repoList = inc["repos"] as? [[String: Any]] ?? []
+    let repos = repoList.count
     let scope = repos > 0 ? "an attack on \(repos) repo\(repos == 1 ? "" : "s")" : "signs of malware on this Mac"
+    // only dormant branches: nothing ran and nothing needed containing, so don't call it "contained an attack"
+    let branchRefs = Set(repoList.flatMap { r in (r["branches"] as? [[String: Any]] ?? []).map { "\(r["path"] ?? "")|\($0["ref"] ?? "")" } }).count
+    let onlyBranches = branchRefs > 0 && (inc["machine"] as? [Any] ?? []).isEmpty && repoList.allSatisfy {
+        ($0["files"] as? [Any] ?? []).isEmpty && ($0["hooks"] as? [Any] ?? []).isEmpty && ($0["dependencies"] as? [Any] ?? []).isEmpty }
     let todos = max(((inc["todos"] as? [Any])?.count ?? 1) - 1, 0)
     let head: String
     switch inc["status"] as? String ?? "open" {
+    case "contained" where onlyBranches && did.isEmpty:
+        head = "Found malware on \(branchRefs) branch\(branchRefs == 1 ? "" : "es") in \(repos) repo\(repos == 1 ? "" : "s") — nothing is running"
     case "contained": head = "Contained \(scope)"
     case "resolved": head = "Resolved \(scope)"
     default: head = "Found \(scope)"

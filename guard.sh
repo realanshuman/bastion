@@ -59,6 +59,7 @@ notify "$MSG"
 # also drop a plain-text pointer the user will see
 echo "$STAMP  $MSG  ($LOG)" >> "$G/ALERTS.txt"
 # hand the findings to the responder (investigate, contain what it can prove, write the incident report)
-[ -x "$G/bin/bastion" ] && ( "$G/bin/bastion" respond --trigger scan --quiet "$@" >/dev/null 2>&1 & )
+# (reusing this scan's findings; `bastion scan` runs the response itself so it can show the incident straight away)
+[ "${BASTION_RESPOND:-}" = inline ] || { [ -x "$G/bin/bastion" ] && ( "$G/bin/bastion" respond --trigger scan --from-log "$LOG" --quiet "$@" >/dev/null 2>&1 & ); }
 echo "LOG: $LOG"
 exit 2

@@ -71,7 +71,7 @@ final class GuardModel: ObservableObject {
 
     let dir = HOME_DIR + "/.security-guard"
     let home = HOME_DIR
-    let version = "4.1.0"
+    let version = "4.1.1"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 
@@ -181,10 +181,13 @@ final class GuardModel: ObservableObject {
         withAnimation { scanning = true }
         let dir = self.dir, home = self.home
         Task.detached(priority: .userInitiated) {
-            let roots = reposOnly
-                ? runShell("find '\(home)' -maxdepth 4 -type d -name .git -not -path '*/node_modules/*' -not -path '*/Library/*' 2>/dev/null | sed 's|/.git$||' | tr '\\n' ' '").trimmingCharacters(in: .whitespacesAndNewlines)
-                : home
-            _ = runShell("bash '\(dir)/guard.sh' \(roots.isEmpty ? home : roots)")
+            // the CLI finds the repos, scans them and runs the response in one go, so the incident is ready when this returns
+            let cli = dir + "/bin/bastion"
+            if FileManager.default.isExecutableFile(atPath: cli) {
+                _ = runShell("'\(cli)' scan \(reposOnly ? "" : "--full") >/dev/null 2>&1")
+            } else {
+                _ = runShell("bash '\(dir)/guard.sh' '\(home)'")
+            }
             await MainActor.run { withAnimation { self.scanning = false }; self.refreshFast() }
         }
     }

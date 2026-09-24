@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "4.1.0"
+let VERSION = "4.1.1"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -409,7 +409,15 @@ func activity(limit: Int) -> [[String: Any]] {
         else { type = "event" }
         let parts = line.components(separatedBy: "  ")
         let message = parts.dropFirst().joined(separator: "  ").trimmed
-        return ["time": parts.first?.trimmed ?? "", "type": type, "message": message.isEmpty ? line : message]
+        var e: [String: Any] = ["time": parts.first?.trimmed ?? "", "type": type, "message": message.isEmpty ? line : message]
+        // a scan's summary line: "N quarantined, M need your attention. See logs.  (/path/to/scan.log)"
+        if let m = try? NSRegularExpression(pattern: #"^(\d+) quarantined, (\d+) need your attention\. See logs\.\s*\((.+)\)$"#)
+            .firstMatch(in: message, range: NSRange(message.startIndex..., in: message)), m.numberOfRanges == 4,
+           let q = Range(m.range(at: 1), in: message), let n = Range(m.range(at: 2), in: message), let l = Range(m.range(at: 3), in: message) {
+            e["type"] = "scan"; e["quarantined"] = Int(message[q]) ?? 0; e["attention"] = Int(message[n]) ?? 0; e["log"] = String(message[l])
+        }
+        if let r = message.range(of: #"^INCIDENT INC-[0-9-]+"#, options: .regularExpression) { e["incident"] = String(message[r].dropFirst(9)) }
+        return e
     }
 }
 
@@ -454,7 +462,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
 
     let protection: [String: Any] = ["watcher": agents.contains(WATCH_LABEL), "scheduled_scan": agents.contains(SCAN_LABEL),
                                      "exec_guard": execGuardOn()]
-    var out: [String: Any] = ["version": VERSION, "engine": ENGINE, "posture": threats.isEmpty ? "protected" : "at_risk",
+    var out: [String: Any] = ["version": VERSION, "engine": ENGINE, "posture": threats.isEmpty ? "protected" : "at_risk", "responding": responseRunning(),
                               "active_threats": threats, "protection": protection, "quarantine_count": quarantine.count]
     if let last {
         // infected branches are latent (reported as to-dos), so they don't make the last scan "not clean"
@@ -520,7 +528,8 @@ func scan(paths: [String], fullHome: Bool, readOnly: Bool) throws -> [String: An
     else { roots = repoRoots(); scope = "git_repos"; if roots.isEmpty { roots = [HOME]; scope = "home" } }
     let started = Date()
     var out: [String: Any] = ["scope": scope, "roots": roots.count, "read_only": readOnly]
-    let r = run("/bin/bash", [engine(readOnly ? "scanner.sh" : "guard.sh")] + roots, timeout: 1800)
+    // guard.sh leaves the response to us (BASTION_RESPOND=inline), so the incident is ready when the scan returns
+    let r = run("/bin/bash", [engine(readOnly ? "scanner.sh" : "guard.sh")] + roots, timeout: 1800, env: readOnly ? [:] : ["BASTION_RESPOND": "inline"])
     if r.timedOut { throw Failure("The scan timed out after 30 minutes.") }
     if readOnly {
         let fs = parseFindings(r.out)
@@ -530,6 +539,10 @@ func scan(paths: [String], fullHome: Bool, readOnly: Bool) throws -> [String: An
             ?? scanLogPaths().last ?? ""
         let parsed = parseScanLog(logPath)
         out["clean"] = parsed["clean"]; out["findings"] = parsed["findings"]; out["quarantined"] = parsed["quarantined"]; out["log"] = logPath
+        if !(parsed["findings"] as? [Any] ?? []).isEmpty, let resp = try? respond(paths: [], planOnly: false, trigger: "scan", wait: true, fromLog: logPath),
+           resp["status"] as? String != "skipped" {
+            out["response"] = ["status": resp["status"] ?? "", "id": resp["id"] ?? resp["incident"] ?? NSNull(), "summary": resp["summary"] ?? ""]
+        }
     }
     out["duration_ms"] = Int(Date().timeIntervalSince(started) * 1000)
     let n = (out["findings"] as? [Any])?.count ?? 0
@@ -774,4 +787,10 @@ func selfTest() -> [String: Any] {
     expect(isLocalAddress("192.168.1.10") && isLocalAddress("127.0.0.1") && isLocalAddress("::1") && isLocalAddress("169.254.1.1"), "local ranges refused")
     expect(!isLocalAddress("23.27.20.187"), "public address allowed")
     return ["ok": failures.isEmpty, "failures": failures]
+}
+
+/// A response is running right now (its lock is held and fresh).
+func responseRunning() -> Bool {
+    guard let m = (try? fm.attributesOfItem(atPath: engine("respond.lock")))?[.modificationDate] as? Date else { return false }
+    return Date().timeIntervalSince(m) < 900
 }

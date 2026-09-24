@@ -192,29 +192,156 @@ func reposUnder(_ root: String) -> [String] {
         .split(separator: "\n").map(String.init).filter { $0.hasSuffix("/.git") }.map { String($0.dropLast(5)) }
 }
 
-/// Branch tips (local and remote-tracking) whose build configs carry the payload.
+// MARK: - Branch scanning (cached: a commit's files and a blob's verdict never change)
+
+/// Cached verdicts are thrown away when the rules (lib.sh) or Bastion itself change.
+let RULES_ID: String = {
+    var h: UInt64 = 0xcbf29ce484222325
+    for b in (fm.contents(atPath: engine("lib.sh")) ?? Data()) + Data(VERSION.utf8) { h ^= UInt64(b); h = h &* 0x100000001b3 }
+    return String(h, radix: 16)
+}()
+
+final class ScanCache: @unchecked Sendable {
+    let lock = NSLock()
+    var trees: [String: [(path: String, blob: String)]] = [:]   // commit → its build configs
+    var verdicts: [String: String] = [:]                         // blob → payload reasons ("" = clean)
+    var dirty = false
+    private let dir = engine("cache")
+    private var treeFile: String { dir + "/branch-trees-\(RULES_ID).tsv" }
+    private var verdictFile: String { dir + "/blob-verdicts-\(RULES_ID).tsv" }
+
+    init() {
+        for line in readText(treeFile).split(separator: "\n") {
+            let p = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard p.count == 3 else { continue }
+            trees[p[0], default: []] += p[1].isEmpty ? [] : [(p[1], p[2])]
+        }
+        for line in readText(verdictFile).split(separator: "\n") {
+            let p = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+            if p.count == 2, !p[0].isEmpty { verdicts[p[0]] = p[1] }
+        }
+    }
+
+    func verdict(_ blob: String) -> String? { lock.lock(); defer { lock.unlock() }; return verdicts[blob] }
+
+    func save() {
+        lock.lock(); defer { lock.unlock() }
+        guard dirty else { return }
+        try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        for f in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where (f.hasPrefix("branch-trees-") || f.hasPrefix("blob-verdicts-")) && !f.contains(RULES_ID) {
+            try? fm.removeItem(atPath: dir + "/" + f)   // verdicts from older rules
+        }
+        var t = "", v = ""
+        for (c, entries) in trees { t += entries.isEmpty ? "\(c)\t\t\n" : entries.map { "\(c)\t\($0.path)\t\($0.blob)\n" }.joined() }
+        for (b, r) in verdicts { v += "\(b)\t\(r)\n" }
+        try? t.write(toFile: treeFile, atomically: true, encoding: .utf8)
+        try? v.write(toFile: verdictFile, atomically: true, encoding: .utf8)
+        dirty = false
+    }
+}
+
+let SCAN_CACHE = ScanCache()
+
+final class Collected<T>: @unchecked Sendable {
+    private var items: [T?]; private let lock = NSLock()
+    init(_ n: Int) { items = Array(repeating: nil, count: n) }
+    func set(_ i: Int, _ v: T) { lock.lock(); items[i] = v; lock.unlock() }
+    var all: [T] { items.compactMap { $0 } }
+}
+
+/// Verdicts for blobs Bastion hasn't judged before: one `git cat-file --batch` reads them all, one run of the lib.sh rule judges them all.
+/// nil when the rule couldn't run, so the caller can fail closed.
+func judgeBlobs(_ repo: String, _ blobs: [String]) -> [String: String]? {
+    guard let bin = GIT_BIN, !blobs.isEmpty else { return [:] }
+    let tmp = NSTemporaryDirectory() + "bastion-blobs-" + UUID().uuidString
+    try? fm.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: tmp) }
+    try? (blobs.joined(separator: "\n") + "\n").write(toFile: tmp + "/.list", atomically: true, encoding: .utf8)
+    let d = runData("/bin/bash", ["-c", #"exec "$0" --no-pager -C "$1" -c core.fsmonitor=false cat-file --batch < "$2""#, bin, repo, tmp + "/.list"],
+                    timeout: 120, env: GIT_ENV).data
+    var i = d.startIndex
+    while i < d.endIndex, let nl = d[i...].firstIndex(of: 0x0A) {   // "<sha> blob <size>\n<content>\n"
+        let header = String(decoding: d[i..<nl], as: UTF8.self).split(separator: " ")
+        i = d.index(after: nl)
+        guard header.count == 3, header[1] == "blob", let size = Int(header[2]) else { continue }
+        let end = d.index(i, offsetBy: size, limitedBy: d.endIndex) ?? d.endIndex
+        fm.createFile(atPath: tmp + "/" + header[0], contents: d[i..<end])
+        i = end < d.endIndex ? d.index(after: end) : end
+    }
+    let r = run("/bin/bash", ["-c", #". "$HOME/.security-guard/lib.sh" || exit 3; for f in "$0"/*; do [ -f "$f" ] && printf '%s\t%s\n' "${f##*/}" "$(config_reasons "$f")"; done"#, tmp], timeout: 300)
+    guard r.code != 3, !r.timedOut else { return nil }
+    var out: [String: String] = [:]
+    for line in r.out.split(separator: "\n") {
+        let p = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        if !p[0].isEmpty { out[p[0]] = p.count == 2 ? p[1] : "" }
+    }
+    return out
+}
+
+/// Branch tips (local and remote-tracking) whose build configs carry the payload, for many repos at once (in parallel).
 /// The checked-out branch is skipped when the working copy already shows the same payload (the scan reports that file).
+func branchFindings(repos: [String]) -> [(repo: String, ref: String, file: String, commit: String)] {
+    guard GIT_BIN != nil, !repos.isEmpty else { return [] }
+    let results = Collected<[(repo: String, ref: String, file: String, commit: String)]>(repos.count)
+    DispatchQueue.concurrentPerform(iterations: repos.count) { i in results.set(i, repoBranchFindings(repos[i])) }
+    SCAN_CACHE.save()
+    return results.all.flatMap { $0 }
+}
+
 func branchFindings(_ repo: String) -> [(ref: String, file: String, commit: String)] {
-    guard GIT_BIN != nil, fm.fileExists(atPath: repo + "/.git") else { return [] }
+    branchFindings(repos: [repo]).map { ($0.ref, $0.file, $0.commit) }
+}
+
+private func repoBranchFindings(_ repo: String) -> [(repo: String, ref: String, file: String, commit: String)] {
+    guard fm.fileExists(atPath: repo + "/.git") else { return [] }
+    let cache = SCAN_CACHE
     let current = git(repo, ["symbolic-ref", "-q", "--short", "HEAD"])?.trimmed ?? ""
     let remotes = Set((git(repo, ["remote"]) ?? "").split(separator: "\n").map(String.init))
-    var verdict: [String: Bool] = [:]
-    var out: [(String, String, String)] = []
-    for line in (git(repo, ["for-each-ref", "--format=%(objectname) %(refname:short)", "refs/heads", "refs/remotes"]) ?? "").split(separator: "\n") {
-        let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
-        guard parts.count == 2, !parts[1].hasSuffix("/HEAD"), !remotes.contains(parts[1]) else { continue }
-        let (sha, ref) = (parts[0], parts[1])
-        for entry in (git(repo, ["ls-tree", "-r", sha], timeout: 60) ?? "").split(separator: "\n") {
-            guard let tab = entry.firstIndex(of: "\t") else { continue }
-            let path = String(entry[entry.index(after: tab)...])
-            guard path.has(CONFIG_NAME_RE), !path.contains("node_modules/") else { continue }
-            let meta = entry[..<tab].split(separator: " ")
-            guard meta.count == 3, meta[1] == "blob" else { continue }
-            let blob = String(meta[2])
-            if verdict[blob] == nil { verdict[blob] = gitData(repo, ["cat-file", "-p", blob]).map { !payloadReasons($0, config: true).isEmpty } ?? false }
-            guard verdict[blob] == true else { continue }
-            if ref == current, let disk = fm.contents(atPath: repo + "/" + path), !payloadReasons(disk, config: true).isEmpty { continue }
-            out.append((ref, path, String(sha.prefix(8))))
+    var tips: [(sha: String, ref: String)] = []
+    for line in (git(repo, ["for-each-ref", "--format=%(objectname) %(objecttype) %(refname:short)", "refs/heads", "refs/remotes"]) ?? "").split(separator: "\n") {
+        let p = line.split(separator: " ", maxSplits: 2).map(String.init)
+        guard p.count == 3, p[1] == "commit", !p[2].hasSuffix("/HEAD"), !remotes.contains(p[2]) else { continue }
+        tips.append((p[0], p[2]))
+    }
+    // commit → its build configs: cached, or one ls-tree per commit Bastion hasn't seen
+    var configs: [String: [(path: String, blob: String)]] = [:]
+    for sha in Set(tips.map(\.sha)) {
+        cache.lock.lock(); let known = cache.trees[sha]; cache.lock.unlock()
+        if let known { configs[sha] = known; continue }
+        guard let data = gitData(repo, ["ls-tree", "-r", "-z", sha], timeout: 60) else { continue }
+        var entries: [(path: String, blob: String)] = []
+        for rec in data.split(separator: 0) {
+            let s = String(decoding: rec, as: UTF8.self)
+            guard let tab = s.firstIndex(of: "\t") else { continue }
+            let path = String(s[s.index(after: tab)...])
+            let meta = s[..<tab].split(separator: " ")
+            guard meta.count == 3, meta[1] == "blob", path.has(CONFIG_NAME_RE), !path.contains("node_modules/") else { continue }
+            entries.append((path, String(meta[2])))
+        }
+        configs[sha] = entries
+        if !entries.contains(where: { $0.path.contains("\t") || $0.path.contains("\n") }) {
+            cache.lock.lock(); cache.trees[sha] = entries; cache.dirty = true; cache.lock.unlock()
+        }
+    }
+    // blob → verdict: cached, or judged in one batch
+    var verdicts: [String: String] = [:]
+    var unknown: [String] = []
+    for blob in Set(configs.values.flatMap { $0.map(\.blob) }) {
+        if let v = cache.verdict(blob) { verdicts[blob] = v } else { unknown.append(blob) }
+    }
+    if !unknown.isEmpty {
+        if let judged = judgeBlobs(repo, unknown) {
+            cache.lock.lock(); for (b, r) in judged { cache.verdicts[b] = r }; cache.dirty = true; cache.lock.unlock()
+            verdicts.merge(judged) { $1 }
+        } else {
+            for b in unknown { verdicts[b] = "rule-unavailable" }   // fail closed, and don't cache it
+        }
+    }
+    var out: [(repo: String, ref: String, file: String, commit: String)] = []
+    for tip in tips.sorted(by: { $0.ref < $1.ref }) {
+        for e in configs[tip.sha] ?? [] where !(verdicts[e.blob] ?? "").isEmpty {
+            if tip.ref == current, let disk = fm.contents(atPath: repo + "/" + e.path), !payloadReasons(disk, config: true).isEmpty { continue }
+            out.append((repo, tip.ref, e.path, String(tip.sha.prefix(8))))
         }
     }
     return out

@@ -19,3 +19,4 @@ bin/
 incidents/
 settings.json
 respond.lock/
+cache/

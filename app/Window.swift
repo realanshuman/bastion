@@ -75,6 +75,13 @@ func withoutTodoCount(_ s: Any?) -> String {
 /// Log lines → sentences: "INCIDENT INC-… [contained]: Contained…" → "Contained…", "CHANGED: x" → "X", and so on.
 func humanizeEvent(_ message: String) -> String {
     var s = message
+    // a scan's summary: "0 quarantined, 5 need your attention. See logs.  (/path/scan.log)"
+    if let re = try? NSRegularExpression(pattern: #"^(\d+) quarantined, (\d+) need your attention\. See logs\."#),
+       let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+       let q = Range(m.range(at: 1), in: s).flatMap({ Int(s[$0]) }), let n = Range(m.range(at: 2), in: s).flatMap({ Int(s[$0]) }) {
+        let parts = [n > 0 ? "\(n) need\(n == 1 ? "s" : "") your attention" : nil, q > 0 ? "\(q) quarantined" : nil].compactMap { $0 }
+        return parts.isEmpty ? "Scan finished — all clear" : "Scan finished — " + parts.joined(separator: ", ")
+    }
     if let r = s.range(of: #"^INCIDENT \S+ \[\w+\]: "#, options: .regularExpression) { s = String(s[r.upperBound...]) }
     else if s.hasPrefix("INCIDENT ") { s = String(s.dropFirst(9)).replacingOccurrences(of: ": ", with: " ", options: [], range: nil) }
     for (pattern, template) in [(#"^CHANGED: "#, ""), (#"^ALERT: "#, ""), (#"^QUARANTINED \[([^\]]+)\]: "#, "Quarantined ($1): "),
@@ -129,6 +136,11 @@ final class Router: ObservableObject {
     func open(incident id: String) { pane = .incidents; incident = id; palette = false }
 }
 
+struct ToastAction {
+    let title: String
+    let run: () -> Void
+}
+
 struct Confirm: Identifiable {
     let id = UUID()
     let title: String, message: String, button: String
@@ -150,6 +162,7 @@ final class AppStore: ObservableObject {
     @Published var checks: [String: JSON] = [:]
     @Published var busy: Set<String> = []
     @Published var toast: String?
+    @Published var toastAction: ToastAction?
     @Published var confirm: Confirm?
     @Published var loaded = false
     @Published var hooks: JSON = [:]
@@ -216,9 +229,32 @@ final class AppStore: ObservableObject {
         run("respond", ["respond"]) { r in if let id = r["id"] as? String { Router.shared.open(incident: id) } }
     }
 
-    func flash(_ text: String) {
-        withAnimation(.easeOut(duration: 0.18)) { toast = text }
-        Task { try? await Task.sleep(nanoseconds: 4_000_000_000); if toast == text { withAnimation { toast = nil } } }
+    func flash(_ text: String, action: ToastAction? = nil) {
+        withAnimation(.easeOut(duration: 0.18)) { toast = text; toastAction = action }
+        Task {
+            try? await Task.sleep(nanoseconds: action == nil ? 4_000_000_000 : 9_000_000_000)
+            if toast == text { withAnimation { toast = nil; toastAction = nil } }
+        }
+    }
+
+    /// Scan every repo. The response runs as part of the scan, so the result — and the incident, if there is one — shows at once.
+    func scan() {
+        busy.insert("scan")
+        Task {
+            let r = await Task.detached(priority: .userInitiated) { Box(json: bastion(["scan"])) }.value.json
+            busy.remove("scan")
+            refresh()
+            if let error = r["error"] as? String { flash(error); return }
+            let n = (r["findings"] as? [Any])?.count ?? 0
+            let secs = max(1, (r["duration_ms"] as? Int ?? 0) / 1000)
+            guard n > 0 else { flash("Scan finished in \(secs)s — all clear."); return }
+            let resp = r["response"] as? JSON
+            if let id = resp?["id"] as? String {
+                flash("Scan finished in \(secs)s — \(withoutTodoCount(resp?["summary"]))", action: ToastAction(title: "Open incident") { Router.shared.open(incident: id) })
+            } else {
+                flash("Scan finished in \(secs)s — \(n) need\(n == 1 ? "s" : "") your attention.", action: ToastAction(title: "Repositories") { Router.shared.go(.repos) })
+            }
+        }
     }
 
     func ask(_ title: String, _ message: String, button: String, _ run: @escaping () -> Void) {
@@ -536,7 +572,12 @@ struct MainWindow: View {
 
     @ViewBuilder private var toast: some View {
         if let t = store.toast {
-            Text(t).font(uiFont(12.5, .medium)).foregroundStyle(DT.text).lineLimit(2)
+            HStack(spacing: 12) {
+                Text(t).font(uiFont(12.5, .medium)).foregroundStyle(DT.text).lineLimit(2)
+                if let a = store.toastAction {
+                    Button(a.title) { withAnimation { store.toast = nil; store.toastAction = nil }; a.run() }.buttonStyle(PrimaryButton())
+                }
+            }
                 .padding(.horizontal, 14).padding(.vertical, 9)
                 .background(DT.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
@@ -607,7 +648,7 @@ struct OverviewPage: View {
                     Button { store.respond() } label: { Label(store.busy.contains("respond") ? "Investigating…" : "Respond", systemImage: "bolt.shield") }
                         .buttonStyle(SecondaryButton()).disabled(store.busy.contains("respond"))
                         .help("Investigate every finding, contain what can be proven, and write an incident report")
-                    Button { store.run("scan", ["scan"]) } label: { Label(store.busy.contains("scan") ? "Scanning…" : "Scan now", systemImage: "magnifyingglass") }
+                    Button { store.scan() } label: { Label(store.busy.contains("scan") ? "Scanning…" : "Scan now", systemImage: "magnifyingglass") }
                         .buttonStyle(PrimaryButton()).disabled(store.busy.contains("scan"))
                 }
             }
@@ -630,7 +671,7 @@ struct OverviewPage: View {
                         }
                         ForEach(Array(store.activity.prefix(6).enumerated()), id: \.offset) { i, e in
                             if i > 0 { Hairline() }
-                            ActivityRow(event: e)
+                            ActivityRow(event: e, open: activityTarget(e, in: store.activity))
                         }
                     }
                 }
@@ -649,6 +690,12 @@ struct OverviewPage: View {
                     .font(uiFont(22, .semibold)).foregroundStyle(DT.text)
                 Text("Watching \(g["repos"] as? Int ?? store.repos.count) repositories · last scan \(shortTime(last?["time"]).lowercased())\((last?["clean"] as? Bool) == true ? " · clean" : "")")
                     .font(uiFont(13)).foregroundStyle(DT.dim)
+                if store.status["responding"] as? Bool == true || store.busy.contains("scan") {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12)
+                        Text(store.busy.contains("scan") ? "Scanning your repositories…" : "Investigating what the scan found…").font(uiFont(12.5, .medium)).foregroundStyle(DT.accent)
+                    }
+                }
             }
         }
     }
@@ -732,9 +779,32 @@ struct ProtectionGroup: View {
     }
 }
 
+/// Where an activity row leads: its incident; for a scan, the incident it opened or updated; the quarantine; settings.
+@MainActor func activityTarget(_ e: JSON, in events: [JSON]) -> (() -> Void)? {
+    if let id = e["incident"] as? String { return { Router.shared.open(incident: id) } }
+    switch e["type"] as? String ?? "" {
+    case "scan":
+        guard let t = parseDate(e["time"]) else { return nil }
+        let next = events.first { ($0["incident"] as? String) != nil && (parseDate($0["time"]).map { $0 >= t && $0.timeIntervalSince(t) < 600 } ?? false) }
+        if let id = next?["incident"] as? String { return { Router.shared.open(incident: id) } }
+        return { Router.shared.go(.repos) }
+    case "quarantined": return { Router.shared.go(.quarantine) }
+    case "setting_changed": return { Router.shared.go(.settings) }
+    default: return nil
+    }
+}
+
 struct ActivityRow: View {
     let event: JSON
+    var open: (() -> Void)? = nil
     var body: some View {
+        if let open {
+            Button(action: open) { row(chevron: true) }.buttonStyle(.plain).hoverRow(radius: 0)
+        } else {
+            row(chevron: false)
+        }
+    }
+    private func row(chevron: Bool) -> some View {
         let type = event["type"] as? String ?? "event"
         let raw = event["message"] as? String ?? ""
         let message = humanizeEvent(raw)
@@ -745,6 +815,7 @@ struct ActivityRow: View {
             case "blocked": return ("hand.raised.fill", DT.orange)
             case "alert": return ("exclamationmark.triangle.fill", DT.orange)
             case "setting_changed": return ("slider.horizontal.3", DT.blue)
+            case "scan": return (event["attention"] as? Int ?? 0 > 0 ? "magnifyingglass.circle.fill" : "checkmark.circle.fill", event["attention"] as? Int ?? 0 > 0 ? DT.orange : DT.green)
             default: return (raw.hasPrefix("INCIDENT") ? "exclamationmark.shield.fill" : "circle.fill", raw.hasPrefix("INCIDENT") ? DT.accent : DT.faint)
             }
         }()
@@ -753,7 +824,8 @@ struct ActivityRow: View {
             Text(message).font(uiFont(12.5)).foregroundStyle(DT.text.opacity(0.9)).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 10)
             Text(ago(event["time"])).font(uiFont(12)).foregroundStyle(DT.faint)
-        }.padding(.horizontal, 14).frame(height: 36).help(message)
+            if chevron { Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(DT.faint) }
+        }.padding(.horizontal, 14).frame(height: 36).contentShape(Rectangle()).help(message)
     }
 }
 
@@ -1114,7 +1186,7 @@ struct ReposPage: View {
                     if (store.status["git_guard"] as? JSON)?["unprotected"] as? Int ?? 0 > 0 {
                         Button { store.run("gitguard", ["enable", "git-guard"]) } label: { Label("Protect all", systemImage: "hand.raised") }.buttonStyle(SecondaryButton())
                     }
-                    Button { store.run("scan", ["scan"]) } label: { Label(store.busy.contains("scan") ? "Scanning…" : "Scan all", systemImage: "magnifyingglass") }
+                    Button { store.scan() } label: { Label(store.busy.contains("scan") ? "Scanning…" : "Scan all", systemImage: "magnifyingglass") }
                         .buttonStyle(PrimaryButton()).disabled(store.busy.contains("scan"))
                 }
             }
@@ -1235,7 +1307,7 @@ struct ActivityPage: View {
                             Section {
                                 ForEach(Array(day.1.enumerated()), id: \.offset) { i, e in
                                     if i > 0 { Hairline().padding(.leading, 40) }
-                                    ActivityRow(event: e).padding(.horizontal, 2)
+                                    ActivityRow(event: e, open: activityTarget(e, in: store.activity)).padding(.horizontal, 2)
                                 }
                             } header: {
                                 Text(day.0).font(uiFont(12, .medium)).foregroundStyle(DT.dim)
@@ -1536,7 +1608,7 @@ struct CommandPalette: View {
 
     private var commands: [Command] {
         var list: [Command] = [
-            Command(group: "Actions", title: "Scan all repositories", icon: "magnifyingglass") { store.run("scan", ["scan"]) },
+            Command(group: "Actions", title: "Scan all repositories", icon: "magnifyingglass") { store.scan() },
             Command(group: "Actions", title: "Respond now — investigate and contain", icon: "bolt.shield") { store.respond() },
             Command(group: "Actions", title: "Protect every repository on push", icon: "hand.raised") { store.run("gitguard", ["enable", "git-guard"]) },
             Command(group: "Actions", title: "Refresh", icon: "arrow.clockwise") { store.refresh() },

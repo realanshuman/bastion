@@ -151,12 +151,14 @@ let wantJSON = argv.contains("--json")
 let assumeYes = argv.contains("--yes") || argv.contains("-y")
 var limit = 20
 var trigger = "manual"
+var fromLog: String? = nil
 var positional: [String] = []
 var skipNext = false
 for (i, a) in argv.enumerated() {
     if skipNext { skipNext = false; continue }
     if a == "-n" || a == "--limit" { if i + 1 < argv.count, let n = Int(argv[i + 1]) { limit = n }; skipNext = true; continue }
     if a == "--trigger" { if i + 1 < argv.count { trigger = argv[i + 1] }; skipNext = true; continue }
+    if a == "--from-log" { if i + 1 < argv.count { fromLog = argv[i + 1] }; skipNext = true; continue }
     if a.hasPrefix("-") { continue }
     positional.append(a)
 }
@@ -219,6 +221,9 @@ do {
                 print(bad("✗ \(fs.count) finding\(fs.count == 1 ? "" : "s")") + faint("  (\(seconds(r))s)")); printFindings(fs)
                 let q = (r["quarantined"] as? [Any])?.count ?? 0
                 if q > 0 { print("\n" + warn("quarantined \(q) known-malicious item\(q == 1 ? "" : "s")") + faint("  (bastion quarantine)")) }
+                if let resp = r["response"] as? [String: Any] {
+                    print("\n" + strong("→ ") + (resp["summary"] as? String ?? "") + ((resp["id"] as? String).map { faint("  (bastion incident \($0))") } ?? ""))
+                }
             }
         }
 
@@ -312,7 +317,7 @@ do {
         if !wantJSON && !argv.contains("--quiet") {
             FileHandle.standardError.write(Data(faint("investigating — scan, git history, processes, network…\n").utf8))
         }
-        let r = try respond(paths: rest, planOnly: argv.contains("--plan"), trigger: trigger, wait: trigger == "manual" || trigger == "agent")
+        let r = try respond(paths: rest, planOnly: argv.contains("--plan"), trigger: trigger, wait: trigger == "manual" || trigger == "agent", fromLog: fromLog)
         let code: Int32 = (r["status"] as? String) == "open" ? 2 : 0
         if argv.contains("--quiet") { exit(code) }
         output(r, code: code) { humanIncident(r) }
@@ -373,12 +378,8 @@ do {
         output(["autonomy": level, "changed": level != current]) { print(good("✓ ") + "auto-respond: " + strong(level)) }
 
     case "branches":
-        var list: [[String: Any]] = []
-        for root in (rest.isEmpty ? repoRoots() : rest) {
-            for repo in reposUnder(root) {
-                for b in branchFindings(repo) { list.append(["repo": repo, "ref": b.ref, "file": b.file, "commit": b.commit]) }
-            }
-        }
+        let list: [[String: Any]] = branchFindings(repos: (rest.isEmpty ? repoRoots() : rest).flatMap(reposUnder))
+            .map { ["repo": $0.repo, "ref": $0.ref, "file": $0.file, "commit": $0.commit] }
         if argv.contains("--emit") {   // scanner lines
             for b in list { print("BRANCH|\(b["repo"] ?? "")|\(b["ref"] ?? "") \(b["file"] ?? "") \(b["commit"] ?? "")") }
             exit(0)
