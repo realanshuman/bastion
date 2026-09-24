@@ -26,7 +26,7 @@ cp "$HERE/bin/bastion" "$APP/Contents/Helpers/bastion"
 
 echo "bundling engine…"   # the app installs this into ~/.security-guard on first launch
 ENG="$APP/Contents/Resources/engine"; rm -rf "$ENG"; mkdir -p "$ENG/shims"
-for f in scanner.sh guard.sh watcher.sh git-guard harden.sh install.sh uninstall.sh README.md LICENSE VERSION \
+for f in lib.sh scanner.sh guard.sh watcher.sh git-guard harden.sh install.sh uninstall.sh README.md LICENSE VERSION \
          allowlist.txt blocklist.txt ignore.txt; do cp "$HERE/$f" "$ENG/"; done
 cp "$HERE/shims/"* "$ENG/shims/"
 

@@ -150,6 +150,7 @@ Bastion reads three small text files in `~/.security-guard/`. Edit them directly
 - **`allowlist.txt`** — your own servers and APIs, so their traffic is never mistaken for a threat (`bastion allow add …`).
 - **`blocklist.txt`** — known-bad IP addresses; ships with known attacker servers (`bastion block add …`).
 - **`ignore.txt`** — files that only *mention* malware signatures, like security docs or tests (`bastion ignore add …`).
+  A build config is only skipped when its exact full path is listed, so a broad entry can't hide a real threat.
 
 One entry per line; `#` starts a comment. Updates never overwrite your lists; new known-bad addresses are merged in.
 

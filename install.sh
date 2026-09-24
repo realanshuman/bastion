@@ -12,7 +12,7 @@ WATCH_LABEL="com.bastion.guard.watcher"
 mkdir -p "$DEST/logs" "$DEST/quarantine" "$LA"
 
 if [ "$SELF" != "$DEST" ]; then
-  for f in scanner.sh guard.sh watcher.sh git-guard harden.sh install.sh uninstall.sh README.md LICENSE VERSION; do
+  for f in lib.sh scanner.sh guard.sh watcher.sh git-guard harden.sh install.sh uninstall.sh README.md LICENSE VERSION; do
     [ -f "$SELF/$f" ] && cp "$SELF/$f" "$DEST/$f"
   done
   # your lists are yours: never overwrite them; new blocklist entries are merged in

@@ -6,6 +6,7 @@
 set -uo pipefail
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
 G="$HOME/.security-guard"
+. "$G/lib.sh" || { echo "guard: missing lib.sh" >&2; exit 1; }
 STAMP=$(date '+%Y%m%d-%H%M%S')
 LOG="$G/logs/scan-$STAMP.log"
 QDIR="$G/quarantine/$STAMP"
@@ -32,7 +33,8 @@ while IFS='|' read -r kind path detail; do
   [ -z "$kind" ] && continue
   case "$kind" in
     STAGING|BEACON|HARVEST|HIDDENDEP)   # unambiguous → quarantine (move, preserve path)
-      if [ -e "$path" ]; then
+      if protected_path "$path"; then echo "  SKIPPED (protected path, not moved): $path" >> "$LOG"
+      elif [ -e "$path" ]; then
         dest="$QDIR/$(echo "$path" | sed 's|^/||')"
         mkdir -p "$(dirname "$dest")" 2>/dev/null
         if mv "$path" "$dest" 2>/dev/null; then

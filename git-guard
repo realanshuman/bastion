@@ -1,15 +1,31 @@
 #!/usr/bin/env bash
-# Blocks a commit/push if any tracked config file carries the injection payload.
-export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+# Bastion push guard (pre-push hook): refuses a push when a config file in a pushed commit carries the
+# config-injection payload. Self-contained because it lives in each repo; the rule mirrors lib.sh.
+export PATH="$PATH:/usr/bin:/bin:/usr/sbin:/sbin"
+# our git calls must not run anything from this repo's config (fsmonitor, textconv, gpg, …)
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+g(){ git -c core.fsmonitor=false -c core.untrackedCache=false "$@"; }
+
+MARKER="global\\.[a-z]{1,2}[[:space:]]*=[[:space:]]*['\"][0-9]+-[0-9]+['\"]"
+SCRAMBLER="_\\\$_[0-9a-f]{4}[[:space:]]*=[[:space:]]*\\(function[[:space:]]*\\("
+OBFUSCATION="_0x[0-9a-f]{4,}|(\\\\x[0-9a-f]{2}){8,}|String\\.fromCharCode|(^|[^A-Za-z0-9_\$.])(eval|atob)\\(|new Function\\(|global\\[['\"]"
+suspicious(){ # $1 = file holding the committed content; a long line alone is not enough
+  grep -qE "$MARKER|$SCRAMBLER|[[:space:]]{100,}[^[:space:]]" "$1" && return 0
+  awk 'length($0) > 500' "$1" | grep -qE "$OBFUSCATION"
+}
+CONFIG_NAMES='(^|/)([^/]+\.config\.(js|mjs|cjs|ts|mts)|\.[^/]+rc\.(js|cjs|mjs))$'
+
+tmp=$(mktemp) || exit 0; trap 'rm -f "$tmp"' EXIT
+refs=""; [ -t 0 ] || refs=$(cat)                     # git passes "<local ref> <local sha> <remote ref> <remote sha>" lines
+[ -n "$refs" ] || refs="HEAD $(g rev-parse HEAD 2>/dev/null) - -"   # run by hand: check HEAD
 bad=0
-while IFS= read -r f; do
-  case "$f" in *.config.js|*.config.mjs|*.config.cjs|*.config.ts|*.config.mts|.*rc.js|.*rc.cjs|.*rc.mjs) ;; *) continue;; esac
-  [ -f "$f" ] || continue
-  L=$(awk '{if(length($0)>m)m=length($0)}END{print m+0}' "$f")
-  if grep -q 'createRequire' "$f" || [ "${L:-0}" -gt 500 ] || grep -qE "global\.[a-z]{1,2}[[:space:]]*=[[:space:]]*['\"][0-9]+-" "$f"; then
-    echo "🛑 security-guard: BLOCKED — injection payload in $f (longest line ${L})" >&2
-    bad=1
-  fi
-done < <({ git diff --cached --name-only 2>/dev/null; git ls-files "*.config.*" ".*rc.js" 2>/dev/null; } | sort -u)
-[ "$bad" -eq 1 ] && { echo "   Fix the file before committing/pushing. (security-guard)" >&2; exit 1; }
+while read -r _ sha _ _; do
+  case "$sha" in ""|0000000000000000000000000000000000000000) continue;; esac   # branch deletion
+  files=$(g ls-tree -r --name-only "$sha" 2>/dev/null) || { echo "⚠️  Bastion couldn't read commit $sha — this push was not checked." >&2; continue; }
+  while IFS= read -r f; do
+    g cat-file -p "$sha:$f" > "$tmp" 2>/dev/null || continue
+    suspicious "$tmp" && { echo "🛑 Bastion: push blocked — injection payload in $f" >&2; bad=1; }
+  done < <(printf '%s\n' "$files" | grep -E "$CONFIG_NAMES")
+done <<< "$refs"
+[ "$bad" -eq 1 ] && { echo "   Restore the file from a trusted commit, then push again. (Bastion)" >&2; exit 1; }
 exit 0

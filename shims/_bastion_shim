@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
 # Bastion execution guard. Installed as node/npm/npx/pnpm/yarn/bun in ~/.security-guard/shims.
-# Default behavior: transparently exec the REAL tool. Only BLOCKS on a payload signature.
+# Default behavior: transparently exec the REAL tool. It only BLOCKS on a payload signature.
 selfdir="$HOME/.security-guard/shims"
 name="$(basename "$0")"
-log(){ echo "$(date '+%F %T')  BLOCKED [$name]: $1" >> "$HOME/.security-guard/ALERTS.txt" 2>/dev/null; osascript -e "display notification \"Blocked $name: $1\" with title \"🛡 Bastion — prevented execution\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
+log(){ echo "$(date '+%F %T')  BLOCKED [$name]: $1" >> "$HOME/.security-guard/ALERTS.txt" 2>/dev/null
+  [ -n "${BASTION_NO_NOTIFY:-}" ] || osascript -e "display notification \"Blocked $name: $1\" with title \"🛡 Bastion — prevented execution\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
 # resolve the REAL binary = next one in PATH that isn't this shim dir
 real=""; IFS=: read -ra parts <<< "$PATH"
 for d in "${parts[@]}"; do [ "$d" = "$selfdir" ] && continue; [ -x "$d/$name" ] && { real="$d/$name"; break; }; done
 [ -z "$real" ] && { echo "bastion-shim: real $name not found in PATH" >&2; exit 127; }
 
-PAYLOAD_RE="global\.[a-z]{1,2}[[:space:]]*=[[:space:]]*['\"][0-9]+-|_\\\$_[0-9a-f]{4}[[:space:]]*=[[:space:]]*\(function|createRequire\(import\.meta\.url\)[^\n]{0,40}global\["
-scan_configs(){ # $1 = dir; block if a config file carries the injection shape
-  local hit=""
+# shared detection rules; if lib.sh is missing, fall back to the payload markers alone
+. "$HOME/.security-guard/lib.sh" 2>/dev/null || {
+  BASTION_MARKER_RE="global\\.[a-z]{1,2}[[:space:]]*=[[:space:]]*['\"][0-9]+-[0-9]+['\"]"
+  BASTION_SCRAMBLER_RE="_\\\$_[0-9a-f]{4}[[:space:]]*=[[:space:]]*\\(function[[:space:]]*\\("
+  config_reasons(){ grep -qE "$BASTION_MARKER_RE|$BASTION_SCRAMBLER_RE" "$1" 2>/dev/null && printf 'payload-marker'; }
+}
+PAYLOAD_RE="$BASTION_MARKER_RE|$BASTION_SCRAMBLER_RE|global\\.r[[:space:]]*=[[:space:]]*require|createRequire\\(import\\.meta\\.url\\).{0,40}global\\["
+
+scan_configs(){ # $1 = dir; prints the first config file that carries the payload
+  local f
   while IFS= read -r f; do
-    local L; L=$(awk '{if(length($0)>m)m=length($0)}END{print m+0}' "$f" 2>/dev/null)
-    if [ "${L:-0}" -gt 500 ] || grep -qE "global\.[a-z]{1,2}[[:space:]]*=[[:space:]]*['\"][0-9]+-|_\\\$_[0-9a-f]{4}[[:space:]]*=[[:space:]]*\(function" "$f" 2>/dev/null; then hit="$f"; break; fi
+    [ -n "$(config_reasons "$f")" ] && { echo "$f"; return 0; }
   done < <(find "$1" -maxdepth 2 -name '*.config.*' -not -path '*/node_modules/*' 2>/dev/null)
-  [ -n "$hit" ] && { echo "$hit"; return 0; }; return 1
+  return 1
 }
 
 scan_hooks(){ # $1 = dir; block install if package.json has a hook that fetches/decodes code or calls a raw IP
@@ -29,14 +36,16 @@ scan_hooks(){ # $1 = dir; block install if package.json has a hook that fetches/
 
 case "$name" in
   node)
-    # block the loader: `node -e '<payload>'`
+    # block the loader: inline code via -e/-p/-pe/--eval/--print (separate argument or --eval=…) carrying a payload
     prev=""
     for a in "$@"; do
-      if [ "$prev" = "-e" ] || [ "$prev" = "--eval" ]; then
-        if printf '%s' "$a" | grep -qE "$PAYLOAD_RE" || [ "${#a}" -gt 2000 ]; then
-          log "node -e loader payload"; echo "🛡 Bastion blocked a node -e infostealer loader. Not executed." >&2; exit 1
-        fi
-      fi; prev="$a"
+      code=""
+      case "$prev" in -e|-p|-pe|--eval|--print) code="$a";; esac
+      case "$a" in --eval=*|--print=*) code="${a#*=}";; esac
+      if [ -n "$code" ] && { printf '%s' "$code" | grep -qE "$PAYLOAD_RE" || [ "${#code}" -gt 2000 ]; }; then
+        log "node inline-code loader"; echo "🛡 Bastion blocked a node loader payload. Not executed." >&2; exit 1
+      fi
+      prev="$a"
     done ;;
   npm|pnpm|yarn|bun|npx)
     # before dev/build/start/test/gen scripts, refuse if the repo config is injected

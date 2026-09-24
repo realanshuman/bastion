@@ -66,7 +66,7 @@ final class GuardModel: ObservableObject {
 
     let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".security-guard")
     let home = NSHomeDirectory()
-    let version = "3.1.0"
+    let version = "3.1.1"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 
@@ -101,8 +101,8 @@ final class GuardModel: ObservableObject {
             let hist = runShell("tail -40 '\(dir)/ALERTS.txt' 2>/dev/null").split(separator: "\n").map(String.init).filter { !$0.isEmpty }.reversed().map { $0 }
             let finds = hist.filter { $0.contains("ALERT") || $0.contains("QUARANTINED") || $0.contains("DETECTED") || $0.contains("KILLED") }
             // CURRENT posture (not history): a live loader, a live C2 connection, or a non-clean last scan
-            let liveLoader = runShell("ps -axo comm=,command= 2>/dev/null | awk '$1 ~ /node$/ && index($0,\"global.r=require\")>0' | wc -l").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
-            let liveC2 = runShell("bl=\"$HOME/.security-guard/blocklist.txt\"; lsof -nP -i 2>/dev/null | grep -wF -f <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' \"$bl\" 2>/dev/null) 2>/dev/null | grep -c ESTABLISHED").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
+            let liveLoader = !runShell(". \"$HOME/.security-guard/lib.sh\" 2>/dev/null && loader_pids").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let liveC2 = !runShell(". \"$HOME/.security-guard/lib.sh\" 2>/dev/null && remote_peers | awk '{print $3}' | grep -xF -f <(bastion_list blocklist.txt)").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let qCount = Int(runShell("find '\(dir)/quarantine' -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
             var qItems: [(name: String, path: String, when: String)] = []
             for b in runShell("ls -1t '\(dir)/quarantine' 2>/dev/null | head -15").split(separator: "\n").map(String.init) where !b.isEmpty {

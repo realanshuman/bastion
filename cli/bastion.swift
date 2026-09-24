@@ -4,7 +4,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "3.1.0"
+let VERSION = "3.1.1"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -234,32 +234,35 @@ func entries(_ text: String, wholeLine: Bool = false) -> [String] {
 }
 func listEntries(_ file: String) -> [String] { entries(readText(engine(file)), wholeLine: file == "ignore.txt") }
 
-/// grep -w semantics: 23.27.20.187 must not match inside 123.27.20.187
-func containsWord(_ hay: String, _ needle: String) -> Bool {
-    func wordy(_ c: Character?) -> Bool { guard let c else { return false }; return c.isLetter || c.isNumber || c == "_" }
-    var from = hay.startIndex
-    while from < hay.endIndex, let r = hay.range(of: needle, range: from..<hay.endIndex) {
-        let before: Character? = r.lowerBound == hay.startIndex ? nil : hay[hay.index(before: r.lowerBound)]
-        let after: Character? = r.upperBound == hay.endIndex ? nil : hay[r.upperBound]
-        if !wordy(before) && !wordy(after) { return true }
-        from = hay.index(after: r.lowerBound)
-    }
-    return false
+/// Remote IP of an lsof line ("… 10.0.0.2:5123->23.27.20.187:443 (ESTABLISHED)" → 23.27.20.187), exact, no port or brackets.
+func remoteAddress(_ line: String) -> String? {
+    guard let arrow = line.range(of: "->") else { return nil }
+    var r = String(line[arrow.upperBound...].split(separator: " ").first ?? "")
+    if let colon = r.lastIndex(of: ":"), r[r.index(after: colon)...].allSatisfy(\.isNumber) { r = String(r[..<colon]) }
+    return r.replacingOccurrences(of: "[", with: "").replacingOccurrences(of: "]", with: "")
 }
 
-func liveLoaders() -> [[String: Any]] {
-    var hits: [[String: Any]] = []
-    for line in run("/bin/ps", ["-axo", "pid=,args="], timeout: 15).out.split(separator: "\n") {
+/// pid → the rest of the line, for one `ps` column
+func processColumn(_ field: String) -> [Int: String] {
+    var table: [Int: String] = [:]
+    for line in run("/bin/ps", ["-axo", "pid=,\(field)="], timeout: 15).out.split(separator: "\n") {
         let s = line.trimmed
         guard let sp = s.firstIndex(of: " "), let pid = Int(s[..<sp]) else { continue }
-        let args = s[sp...].trimmed
-        guard let exe = args.split(separator: " ").first,
-              (String(exe) as NSString).lastPathComponent.hasPrefix("node") else { continue }
-        if args.has(#"\s(-e|--eval)\s.*(global\.[a-z]{1,2}\s*=|_\$_[0-9a-f]{4}\s*=|createRequire)"#) {
-            hits.append(["pid": pid, "command": String(args.prefix(160))])
-        }
+        table[pid] = s[sp...].trimmed
     }
-    return hits
+    return table
+}
+
+/// node started with inline code (-e/-p/--eval/--print, separate or joined with =) carrying a loader marker.
+/// Same rule as BASTION_LOADER_RE in lib.sh.
+let LOADER_RE = #"(^|\s)(-e|-p|-pe|--eval|--print)(\s|=).*(global\.[a-z]{1,2}\s*=\s*['"]?[0-9]+-[0-9]+|_\$_[0-9a-f]{4}\s*=|global\.r\s*=\s*require)"#
+
+func liveLoaders() -> [[String: Any]] {
+    let names = processColumn("ucomm"), commands = processColumn("args")
+    return names.keys.sorted().compactMap { pid -> [String: Any]? in
+        guard let name = names[pid], name.has(#"^node[0-9.]*$"#), let cmd = commands[pid], cmd.has(LOADER_RE) else { return nil }
+        return ["pid": pid, "command": String(cmd.prefix(160))]
+    }
 }
 
 func liveC2() -> [[String: Any]] {
@@ -267,12 +270,13 @@ func liveC2() -> [[String: Any]] {
     let block = listEntries("blocklist.txt").filter { !allow.contains($0) }
     guard !block.isEmpty else { return [] }
     var hits: [[String: Any]] = []
-    for line in run("/usr/sbin/lsof", ["-nP", "-i"], timeout: 20).out.split(separator: "\n") where line.contains("ESTABLISHED") {
+    let blocked = Set(block)
+    for line in run("/usr/sbin/lsof", ["-nP", "-i"], timeout: 20).out.split(separator: "\n")
+    where line.contains("ESTABLISHED") || line.contains("SYN_SENT") {
         let l = String(line)
-        for ip in block where containsWord(l, ip) {
-            let cols = l.split(separator: " ")
-            hits.append(["ip": ip, "process": cols.first.map(String.init) ?? "?", "pid": cols.count > 1 ? Int(cols[1]) ?? 0 : 0])
-        }
+        guard let ip = remoteAddress(l), blocked.contains(ip) else { continue }
+        let cols = l.split(separator: " ")
+        hits.append(["ip": ip, "process": cols.first.map(String.init) ?? "?", "pid": cols.count > 1 ? Int(cols[1]) ?? 0 : 0])
     }
     return hits
 }
@@ -527,10 +531,15 @@ func enable(_ f: Feature) throws -> [String: Any] {
         return ["feature": f.rawValue, "enabled": on, "changed": on,
                 "message": on ? "Execution guard is on for new terminal windows: node/npm/npx/pnpm/yarn/bun refuse to run in infected projects." : "Couldn't update ~/.zshrc."]
     case .gitGuard:
-        var installed: [String] = [], skipped: [String] = [], already = 0
+        var installed: [String] = [], updated: [String] = [], skipped: [String] = [], already = 0
+        let current = readText(engine("git-guard"))
         for repo in repoRoots() {
             switch gitGuardState(repo) {
-            case "protected": already += 1
+            case "protected":
+                let hook = repo + "/.git/hooks/pre-push"
+                if !current.isEmpty && readText(hook) != current, (try? current.write(toFile: hook, atomically: true, encoding: .utf8)) != nil {
+                    chmod(hook, 0o755); updated.append(repo)
+                } else { already += 1 }
             case "unprotected":
                 let hooks = repo + "/.git/hooks", dst = hooks + "/pre-push"
                 try? fm.createDirectory(atPath: hooks, withIntermediateDirectories: true)
@@ -538,10 +547,12 @@ func enable(_ f: Feature) throws -> [String: Any] {
             default: skipped.append(repo)
             }
         }
-        if !installed.isEmpty { logEvent("CHANGED: git push guard added to \(installed.count) repo(s)") }
-        return ["feature": f.rawValue, "enabled": true, "changed": !installed.isEmpty, "installed": installed,
-                "already_protected": already, "skipped_custom_hooks": skipped,
-                "message": "Push guard added to \(installed.count) repo(s); \(already) already had it. Repos with their own hook setup were left alone."]
+        if !installed.isEmpty || !updated.isEmpty {
+            logEvent("CHANGED: git push guard added to \(installed.count) repo(s), updated in \(updated.count)")
+        }
+        return ["feature": f.rawValue, "enabled": true, "changed": !installed.isEmpty || !updated.isEmpty, "installed": installed,
+                "updated": updated, "already_protected": already, "skipped_custom_hooks": skipped,
+                "message": "Push guard added to \(installed.count) repo(s) and updated in \(updated.count); \(already) were already current. Repos with their own hook setup were left alone."]
     }
 }
 
@@ -635,7 +646,7 @@ func restore(_ id: String) throws -> [String: Any] {
 
 // MARK: - Engine setup (used by Bastion.app on launch)
 
-let ENGINE_FILES = ["scanner.sh", "guard.sh", "watcher.sh", "git-guard", "harden.sh", "install.sh", "uninstall.sh", "README.md", "LICENSE", "VERSION"]
+let ENGINE_FILES = ["lib.sh", "scanner.sh", "guard.sh", "watcher.sh", "git-guard", "harden.sh", "install.sh", "uninstall.sh", "README.md", "LICENSE", "VERSION"]
 
 func bootstrap() -> [String: Any] {
     let exe = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath()
@@ -664,6 +675,27 @@ func bootstrap() -> [String: Any] {
         _ = run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(WATCH_LABEL)"], timeout: 20)
     }
     return ["ok": true, "action": have.isEmpty ? "installed" : "updated", "from": have, "to": want, "engine": ENGINE]
+}
+
+// MARK: - Self-test of the CLI's own detection rules (mirrors the lib.sh cases)
+
+func selfTest() -> [String: Any] {
+    var failures: [String] = []
+    func expect(_ ok: Bool, _ name: String) { if !ok { failures.append(name) } }
+    for l in ["node -e global.i='1-183';global.r=require;", "/usr/local/bin/node --eval=global.i = '1-183';x()",
+              "node -p global.r=require;require('x')", "node --print global.o='1-71'", "node -pe _$_2b1f=(function(i,p){})"] {
+        expect(l.has(LOADER_RE), "should catch loader: \(l)")
+    }
+    for l in ["node -e console.log(process.version)", "node server.js --eval-mode global.i='1-2'", "node dist/index.js"] {
+        expect(!l.has(LOADER_RE), "should ignore: \(l)")
+    }
+    expect(remoteAddress("node 42 me 23u IPv4 0x1 0t0 TCP 10.0.0.5:50123->23.27.20.187:443 (ESTABLISHED)") == "23.27.20.187", "remote IPv4")
+    expect(remoteAddress("curl 43 me 5u IPv4 0x2 0t0 TCP 10.0.0.5:50124->123.27.20.187:443 (ESTABLISHED)") != "23.27.20.187", "no substring IP match")
+    expect(remoteAddress("node 44 me 7u IPv6 0x3 0t0 TCP [2001:db8::5]:50125->[2001:db8::1]:8080 (SYN_SENT)") == "2001:db8::1", "remote IPv6")
+    expect(remoteAddress("node 45 me 8u IPv4 0x4 0t0 TCP *:3000 (LISTEN)") == nil, "listening socket has no remote")
+    expect(isLocalAddress("192.168.1.10") && isLocalAddress("127.0.0.1") && isLocalAddress("::1") && isLocalAddress("169.254.1.1"), "local ranges refused")
+    expect(!isLocalAddress("23.27.20.187"), "public address allowed")
+    return ["ok": failures.isEmpty, "failures": failures]
 }
 
 // MARK: - MCP server (stdio, newline-delimited JSON-RPC 2.0)
@@ -1063,6 +1095,13 @@ do {
     case "connect":
         let c = connectInfo()
         output(c) { humanConnect(c) }
+
+    case "selftest":
+        let r = selfTest()
+        output(r, code: r["ok"] as? Bool ?? false ? 0 : 1) {
+            let f = r["failures"] as? [String] ?? []
+            print(f.isEmpty ? good("✓ detection rules pass") : bad("✗ \(f.count) rule check(s) failed:\n  ") + f.joined(separator: "\n  "))
+        }
 
     case "bootstrap":
         let r = bootstrap()
