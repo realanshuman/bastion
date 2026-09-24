@@ -202,7 +202,15 @@ do {
         let safe = r["safe_to_run"] as? Bool ?? false
         output(r, code: safe ? 0 : 2) {
             let dir = r["path"] as? String ?? ""
-            if safe { print(good("✓ safe to run") + faint("  — no injected configs, install hooks or auto-run tasks in \(shortPath(dir))")) }
+            if safe {
+                let on = (r["current_branch"] as? String).map { " on \($0)" } ?? ""
+                print(good("✓ safe to run\(on)") + faint("  — no injected configs, install hooks or auto-run tasks in \(shortPath(dir))"))
+                let refs = r["infected_branch_refs"] as? [String] ?? []
+                if !refs.isEmpty {
+                    print(warn("! \(refs.count) other branch\(refs.count == 1 ? " carries" : "es carry") malware: ") + refs.joined(separator: ", ")
+                          + faint("  — don't check \(refs.count == 1 ? "it" : "them") out or merge \(refs.count == 1 ? "it" : "them")"))
+                }
+            }
             else { print(bad("✗ not safe to run install/dev/build in \(shortPath(dir))")); printFindings(r["findings"] as? [[String: Any]] ?? [], under: dir) }
             let machine = r["machine_threats"] as? [[String: Any]] ?? []
             if !machine.isEmpty { print("\n" + warn("! this Mac shows signs of infection:")); printFindings(machine) }

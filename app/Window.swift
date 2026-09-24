@@ -211,7 +211,17 @@ final class AppStore: ObservableObject {
             let r = await Task.detached(priority: .userInitiated) { Box(json: bastion(["check", path])) }.value.json
             busy.remove("check:" + path)
             checks[path] = r
-            flash(r["safe_to_run"] as? Bool == true ? "\((path as NSString).lastPathComponent) is safe to run." : "\((path as NSString).lastPathComponent) is not safe to run.")
+            let name = (path as NSString).lastPathComponent
+            let refs = r["infected_branch_refs"] as? [String] ?? []
+            let on = (r["current_branch"] as? String).map { " on \($0)" } ?? ""
+            if r["safe_to_run"] as? Bool != true {
+                let n = (r["findings"] as? [Any])?.count ?? 0
+                flash("\(name) is not safe to run — \(n) problem\(n == 1 ? "" : "s"). Don't run npm here until it's fixed.")
+            } else if refs.isEmpty {
+                flash("\(name) is safe to run\(on).")
+            } else {
+                flash("\(name) is safe to run\(on), but \(refs.joined(separator: ", ")) \(refs.count == 1 ? "carries" : "carry") malware — don't check \(refs.count == 1 ? "it" : "them") out or merge \(refs.count == 1 ? "it" : "them").")
+            }
         }
     }
 
@@ -1255,7 +1265,15 @@ struct RepoRow: View {
     @ViewBuilder private func health(_ path: String) -> some View {
         if let c = store.checks[path] {
             let safe = c["safe_to_run"] as? Bool ?? false
-            badge(safe ? DT.green : DT.red, safe ? "Safe to run" : "\((c["findings"] as? [Any])?.count ?? 0) problem(s)")
+            let refs = c["infected_branch_refs"] as? [String] ?? []
+            if !safe {
+                badge(DT.red, "\((c["findings"] as? [Any])?.count ?? 0) problem(s)")
+            } else if refs.isEmpty {
+                badge(DT.green, "Safe to run")
+            } else {   // safe where you are, but a branch carries the payload: say both
+                badge(DT.orange, "\(refs.count) infected branch\(refs.count == 1 ? "" : "es")")
+                    .help("Safe to run on \(c["current_branch"] as? String ?? "this branch"). \(refs.joined(separator: ", ")) \(refs.count == 1 ? "carries" : "carry") malware — don't check \(refs.count == 1 ? "it" : "them") out or merge \(refs.count == 1 ? "it" : "them").")
+            }
         } else if let n = repo["findings"] as? Int, n > 0 {
             badge(DT.red, "\(n) finding\(n == 1 ? "" : "s")")
         } else if let b = repo["infected_branches"] as? Int, b > 0 {

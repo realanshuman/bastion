@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "4.1.1"
+let VERSION = "4.1.2"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -510,12 +510,19 @@ func checkPath(_ raw: String) throws -> [String: Any] {
                     "dependencies (install scripts, lockfile sources" + (osvEnabled() ? ", osv.dev)" : ")")],
         "duration_ms": Int(Date().timeIntervalSince(started) * 1000),
     ]
-    if !branches.isEmpty {
-        out["branch_advice"] = "Don't check out or merge these branches until they're cleaned: " + branches.compactMap { $0["ref"] as? String }.joined(separator: ", ") + "."
+    var refs: [String] = []
+    for b in branches { if let r = b["ref"] as? String, !refs.contains(r) { refs.append(r) } }
+    let current = git(dir, ["symbolic-ref", "-q", "--short", "HEAD"])?.trimmed ?? ""
+    if !current.isEmpty { out["current_branch"] = current }
+    let refList = refs.joined(separator: ", ")
+    if !refs.isEmpty {
+        out["infected_branch_refs"] = refs
+        out["branch_advice"] = "Don't check out or merge \(refs.count == 1 ? "this branch" : "these branches") until \(refs.count == 1 ? "it's" : "they're") cleaned: \(refList)."
     }
-    out["advice"] = project.isEmpty
-        ? "Nothing suspicious in this project. OK to run install, dev, build and test here."
-        : "Do not run install, dev, build, test or codegen here until these findings are fixed. Show the user each finding's remediation."
+    out["advice"] = !project.isEmpty
+        ? "Do not run install, dev, build, test or codegen here until these findings are fixed. Show the user each finding's remediation."
+        : refs.isEmpty ? "Nothing suspicious in this project. OK to run install, dev, build and test here."
+        : "The checked-out code\(current.isEmpty ? "" : " (\(current))") is clean, so install, dev, build and test are OK here. But \(refList) \(refs.count == 1 ? "carries" : "carry") malware: don't check \(refs.count == 1 ? "it" : "them") out or merge \(refs.count == 1 ? "it" : "them"), and tell the user."
     if !machine.isEmpty { out["machine_advice"] = "This Mac itself shows signs of infection. Run a full scan (bastion_scan / `bastion scan`) and tell the user." }
     return out
 }
