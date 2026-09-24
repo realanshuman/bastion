@@ -50,7 +50,9 @@ func humanStatus(_ s: [String: Any]) {
     }
     if let l = s["last_scan"] as? [String: Any] {
         let clean = l["clean"] as? Bool ?? false
-        print("  last scan           \(friendly(l["time"])) · " + (clean ? good("clean") : warn((l["result"] as? String ?? "").lowercased())))
+        let br = l["infected_branches"] as? Int ?? 0
+        print("  last scan           \(friendly(l["time"])) · " + (clean ? good("clean") : warn((l["result"] as? String ?? "").lowercased()))
+              + (clean && br > 0 ? warn(" · \(br) infected branch\(br == 1 ? "" : "es")") + faint("   (bastion branches)") : ""))
     } else { print("  last scan           " + faint("never — run: bastion scan")) }
     let q = s["quarantine_count"] as? Int ?? 0
     print("  quarantine          " + (q == 0 ? faint("empty") : warn("\(q) item\(q == 1 ? "" : "s")")))
@@ -126,6 +128,12 @@ bastion \(VERSION) — guard for supply-chain malware in JavaScript projects
   bastion incidents               incident history  ·  incident [id] shows the report  ·  incident resolve [id]
   bastion undo [id]               put back files Bastion cleaned, if it got one wrong
   bastion autonomy [level]        contain (default) · observe (report only) · off
+  bastion deps [dir]              dependencies: install scripts, lockfile sources (--online: also osv.dev)
+  bastion history [repo]          every payload git remembers: commits, branches, deleted branches
+  bastion branches [dirs…]        payloads on branches you haven't checked out
+  bastion hooks install|remove claude|cursor|all   the agent hard-guard
+  bastion ci-setup [repo] [--write]   the Team PR guard GitHub Action
+  bastion osv on|off              online malware check against osv.dev (sends package names + versions)
   bastion connect                 plug Bastion into Claude Code, Cursor, Codex…
   bastion mcp                     run as an MCP server over stdio (for AI agents)
 
@@ -161,10 +169,10 @@ func output(_ obj: [String: Any], code: Int32 = 0, human: () -> Void) -> Never {
 }
 
 /// Lowering protection needs a person: an interactive "y", or an explicit --yes.
-func confirmWeakening(_ question: String) throws {
+func confirmWeakening(_ question: String, why: String = "This lowers protection, so a person has to confirm it.") throws {
     if assumeYes { return }
     guard isatty(STDIN_FILENO) != 0 else {
-        throw Failure("This lowers protection, so a person has to confirm it. Run it in a terminal, or add --yes.")
+        throw Failure("\(why) Run it in a terminal, or add --yes.")
     }
     FileHandle.standardError.write(Data("\(question) [y/N] ".utf8))
     let answer = (readLine() ?? "").trimmed.lowercased()
@@ -363,6 +371,87 @@ do {
             if target < now { notify("Auto-respond was lowered to \(level).") }
         }
         output(["autonomy": level, "changed": level != current]) { print(good("✓ ") + "auto-respond: " + strong(level)) }
+
+    case "branches":
+        var list: [[String: Any]] = []
+        for root in (rest.isEmpty ? repoRoots() : rest) {
+            for repo in reposUnder(root) {
+                for b in branchFindings(repo) { list.append(["repo": repo, "ref": b.ref, "file": b.file, "commit": b.commit]) }
+            }
+        }
+        if argv.contains("--emit") {   // scanner lines
+            for b in list { print("BRANCH|\(b["repo"] ?? "")|\(b["ref"] ?? "") \(b["file"] ?? "") \(b["commit"] ?? "")") }
+            exit(0)
+        }
+        output(["infected_branches": list, "clean": list.isEmpty], code: list.isEmpty ? 0 : 2) {
+            if list.isEmpty { print(good("✓ no payload on any branch")) }
+            for b in list { print(bad("✗ ") + strong(b["ref"] as? String ?? "") + "  \(b["file"] ?? "")" + faint("  \(tilde(b["repo"] as? String ?? "")) · \(b["commit"] ?? "")")) }
+        }
+
+    case "history":
+        if !wantJSON { FileHandle.standardError.write(Data(faint("searching every branch, tag, stash and deleted branch…\n").utf8)) }
+        let r = try historyHunt(rest.first ?? ".")
+        output(r, code: r["clean"] as? Bool == true ? 0 : 2) {
+            print((r["clean"] as? Bool == true ? good("✓ ") : bad("✗ ")) + (r["summary"] as? String ?? ""))
+            for e in r["introduced"] as? [[String: Any]] ?? [] {
+                print("  " + bad("+") + " \(e["short"] ?? "") " + strong("\(e["file"] ?? "")") + faint("  by \(e["committer"] ?? "") <\(e["committer_email"] ?? "")> · \(humanTime(e["date"])) · in \((e["refs"] as? [String] ?? []).joined(separator: ", "))"))
+            }
+            for b in r["infected_branches"] as? [[String: Any]] ?? [] { print("  " + warn("⎇") + " \(b["ref"] ?? ""): \(b["file"] ?? "")") }
+            for o in r["unreachable"] as? [[String: Any]] ?? [] { print("  " + faint("◌ \(o["short"] ?? "") \(o["file"] ?? "") — left over from a deleted branch")) }
+            print(faint(r["note"] as? String ?? ""))
+        }
+
+    case "deps":
+        if argv.contains("--emit") { depsEmit(rest).forEach { print($0) }; exit(0) }
+        let r = try depsReport(rest.first ?? ".", online: argv.contains("--online") ? true : nil, preinstall: argv.contains("--preinstall"))
+        let code: Int32 = (r["findings"] as? [Any] ?? []).isEmpty ? 0 : 2
+        if argv.contains("--quiet") { exit(code) }
+        output(r, code: code) {
+            print((code == 0 ? good("✓ ") : bad("✗ ")) + (r["summary"] as? String ?? ""))
+            printFindings(r["findings"] as? [[String: Any]] ?? [], under: r["path"] as? String)
+            if let e = r["online_error"] as? String { print(warn("! ") + e) }
+        }
+
+    case "hook":
+        runHook(rest.first ?? "claude")
+
+    case "hooks":
+        let action = rest.first ?? "status"
+        let agents = rest.count > 1 && rest[1] != "all" ? [rest[1]] : ["claude", "cursor"]
+        if action == "status" {
+            let st: [String: Any] = ["claude": hookInstalled("claude"), "cursor": hookInstalled("cursor")]
+            output(st) { for a in ["claude", "cursor"] { print("\(a == "claude" ? "Claude Code" : "Cursor")  " + ((st[a] as? Bool ?? false) ? good("guarded") : faint("not guarded"))) } }
+        }
+        guard ["install", "remove"].contains(action) else { throw Failure("Usage: bastion hooks install|remove|status claude|cursor|all") }
+        if action == "remove" { try confirmWeakening("Remove Bastion's hard-guard from \(agents.joined(separator: " and "))?") }
+        let results = try agents.map { try setHook($0, on: action == "install") }
+        output(["results": results]) {
+            for r in results {
+                print(good("✓ ") + "\(r["agent"] as? String == "cursor" ? "Cursor" : "Claude Code"): " + ((r["installed"] as? Bool ?? false) ? "hard-guard on" : "hard-guard off") + faint((r["changed"] as? Bool ?? false) ? "  (\(tilde(r["file"] as? String ?? "")))" : "  (no change)"))
+            }
+        }
+
+    case "ci-setup":
+        let r = try ciSetup(rest.first ?? ".", write: argv.contains("--write"))
+        output(r) {
+            if r["written"] as? Bool == true { print(good("✓ ") + "added \(tilde(r["workflow"] as? String ?? ""))") }
+            else if r["installed"] as? Bool == true { print(good("✓ ") + "PR guard already set up in \(tilde(r["repo"] as? String ?? ""))") }
+            else { print(r["yaml"] as? String ?? "") }
+            print(faint(r["next"] as? String ?? ""))
+        }
+
+    case "osv":
+        let action = rest.first ?? "status"
+        if action == "on" {
+            try confirmWeakening("Check dependencies against osv.dev? Bastion sends package names and versions — never your code.",
+                                 why: "This sends package names and versions to osv.dev, so a person has to confirm it.")
+            updateSettings { $0["osv"] = true }
+            logEvent("CHANGED: online malware check (osv.dev) turned ON")
+        } else if action == "off" {
+            updateSettings { $0["osv"] = false }
+            logEvent("CHANGED: online malware check (osv.dev) turned OFF")
+        }
+        output(["osv": osvEnabled()]) { print("online malware check (osv.dev): " + (osvEnabled() ? good("on") : faint("off"))) }
 
     case "connect":
         let c = connectInfo()

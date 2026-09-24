@@ -4,7 +4,9 @@
 # Never executes inspected files.
 set -uo pipefail
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
-. "$HOME/.security-guard/lib.sh" || { echo "scanner: missing lib.sh" >&2; exit 1; }
+# lib.sh sits next to this script (engine folder, or the GitHub Action checkout)
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh" 2>/dev/null || . "$HOME/.security-guard/lib.sh" || { echo "scanner: missing lib.sh" >&2; exit 1; }
+BASTION_BIN="$(cd "$(dirname "$0")" && pwd)/bin/bastion"; [ -x "$BASTION_BIN" ] || BASTION_BIN="$HOME/.security-guard/bin/bastion"
 ROOTS=("$@"); [ ${#ROOTS[@]} -eq 0 ] && ROOTS=("$HOME")
 FOUND=0
 emit(){ printf '%s\n' "$*"; }
@@ -40,6 +42,31 @@ while IFS= read -r -d '' f; do
   is_ignored "$f" && continue
   autorun_task "$f" && { emit "AUTORUN|$f|runs-on-folder-open"; FOUND=$((FOUND+1)); }
 done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f -name tasks.json -path '*/.vscode/*' -print0 2>/dev/null)
+
+# 2d. dependencies: install scripts in node_modules, and lockfile entries from untrusted addresses
+if [ "${SCAN_DEPS:-1}" = 1 ]; then
+  while IFS= read -r -d '' nm; do
+    is_ignored "$nm" && continue
+    while IFS= read -r line; do [ -n "$line" ] && { emit "$line"; FOUND=$((FOUND+1)); }; done < <(deps_modules_scan "$(dirname "$nm")")
+  done < <(find "${ROOTS[@]}" -type d \( -name .git -o -name .Trash -o -name Library -o -name .security-guard -o -name .next -o -name .cache -o -name dist -o -name build \) -prune -o -type d -name node_modules -prune -print0 2>/dev/null)
+  while IFS= read -r -d '' lock; do
+    is_ignored "$lock" && continue
+    while IFS= read -r line; do [ -n "$line" ] && { emit "$line"; FOUND=$((FOUND+1)); }; done < <(deps_lock_scan "$lock")
+  done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f \( -name package-lock.json -o -name npm-shrinkwrap.json -o -name yarn.lock -o -name pnpm-lock.yaml -o -name bun.lock \) -print0 2>/dev/null)
+fi
+
+# 2e. CI workflows that ship secrets out
+while IFS= read -r -d '' wf; do
+  is_ignored "$wf" && continue
+  workflow_exfil "$wf" && { emit "WORKFLOW|$wf|secrets-exfiltration"; FOUND=$((FOUND+1)); }
+done < <(find "${ROOTS[@]}" -type d $PRUNE -prune -o -type f -path '*/.github/workflows/*' \( -name '*.yml' -o -name '*.yaml' \) -print0 2>/dev/null)
+
+# 2f. payloads on branches that aren't checked out, and known-malicious package versions (osv.dev, only if you opted in)
+if [ -z "${SCAN_REPO_ONLY:-}" ] && [ -x "$BASTION_BIN" ]; then
+  while IFS= read -r line; do [ -n "$line" ] && { emit "$line"; FOUND=$((FOUND+1)); }; done < <("$BASTION_BIN" branches --emit "${ROOTS[@]}" 2>/dev/null; [ "${SCAN_DEPS:-1}" = 1 ] && "$BASTION_BIN" deps --emit "${ROOTS[@]}" 2>/dev/null)
+fi
+
+[ -n "${SCAN_REPO_ONLY:-}" ] && { [ "$FOUND" -gt 0 ] && exit 2 || exit 0; }   # CI: the checkout only, no machine checks
 
 # 3. temp staging dirs / fake npm cache / beacons / harvested data
 for t in /tmp /var/tmp /private/tmp "${TMPDIR:-/nonexistent}"; do

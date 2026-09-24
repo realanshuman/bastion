@@ -44,7 +44,7 @@ while IFS='|' read -r kind path detail; do
           echo "  QUARANTINE-FAILED (left in place): $path" >> "$LOG"
         fi
       fi ;;
-    CONFIG|SOURCE|SCRIPT|AUTORUN)       # repo files → ALERT ONLY (never auto-edit)
+    CONFIG|SOURCE|SCRIPT|AUTORUN|DEPHOOK|DEPMAL|DEPURL|WORKFLOW|BRANCH)   # repo files → ALERT ONLY (never auto-edit)
       echo "  ALERT (needs manual fix, not auto-touched): $path [$detail]" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;
     PROCESS)
       echo "  ALERT: loader process PID(s) $path running — kill manually: kill $path" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;

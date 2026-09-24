@@ -38,7 +38,10 @@ what it can prove and hands you a short to-do list for the rest.
 - 🛡️ **Blocks it before it runs** — refuses to start a dev server or an install when a project has been tampered with.
 - 🧠 **Responds on its own** — investigates, removes injected code it can prove the attacker added, stops loaders, quarantines leftovers and blocks attacker servers.
 - 📋 **Tells you what's left** — commit the fix, clean the pushed branches, remove the attacker's access, rotate the secrets that were exposed. With the exact commands.
-- 🤖 **Keeps your AI agent safe too** — agents ask Bastion "is this repo safe to run?" before `npm install` or `npm run dev`, and can hand it an incident to work.
+- 📦 **Checks your dependencies** — install scripts deep in `node_modules`, lockfiles that pull packages from odd servers, and (if you opt in) the osv.dev list of known malicious packages.
+- 🕵️ **Hunts through git history** — finds a payload on any branch, in the reflog, or left over from a deleted branch, and names the commit and identity that planted it.
+- 👥 **Guards your team** — a GitHub Action fails any pull request that carries a payload, so it never reaches `main`.
+- 🤖 **Keeps your AI agent safe too** — agents ask Bastion "is this repo safe to run?" before `npm install` or `npm run dev`, and a hard-guard hook stops Claude Code or Cursor from running them in an unsafe repo at all.
 - ↩️ **Never destructive** — nothing is deleted, every file change has an undo, and commits, pushes and access changes are always left to you.
 - 🧘 **Doesn't cry wolf** — an allowlist for your own servers and an ignore list for docs and tests keep false alarms away.
 
@@ -96,12 +99,61 @@ unsaved edits in it — those become to-dos. Choose how much it does on its own 
 - **The window** — everything else, in a keyboard-first layout:
   - **Overview** — are you protected, the open incident, and every protection switch.
   - **Incidents** — grouped by status; each one opens into the full investigation, to-dos and timeline.
-  - **Repositories** — every git repo, its health and push guard; check one before you run it.
+  - **Repositories** — every git repo, its health, push guard and infected branches; check one, hunt its
+    history, check its dependencies or add the Team PR guard from the **⋯** menu.
   - **Activity** — everything Bastion caught, blocked or changed, by day.
-  - **Quarantine**, **AI agents** and **Settings** (auto-respond, protections, your lists).
+  - **Quarantine**, **AI agents** (MCP setup and the hard-guard) and **Settings** (auto-respond,
+    protections, the online malware check, your lists).
   - **⌘K** opens the command menu; **⌘1–7** jump between pages.
 
 <div align="center"><img src="assets/panel-preview.png" width="300" alt="Bastion menu-bar panel"/></div>
+
+## Dependency guard
+
+Every install — by you, a script or an agent — is checked first. Bastion looks at:
+
+- **install scripts in `node_modules`** — a `preinstall`/`postinstall` that downloads and runs code, or
+  runs a file that carries a payload or a known worm's markers;
+- **your lockfile** — packages resolved from plain `http://` or a raw IP address instead of a registry;
+- **known malicious versions** (opt-in) — your exact package versions are compared with the
+  [osv.dev](https://osv.dev) malicious-package list. Only package names and versions are sent, never your code.
+  Turn it on in **Settings** or with `bastion osv on`.
+
+```bash
+bastion deps              # check this project's dependencies (--online adds the osv.dev check once)
+```
+
+## Git history hunt
+
+A clean working tree doesn't mean a clean repo. `bastion history` searches every commit on every branch,
+the reflog and objects left over from deleted branches for a planted payload, and tells you which commit
+brought it in, who committed it and which branches still carry it. `bastion branches` lists the local and
+pushed branches whose configs are infected, so you don't merge or check one out by accident.
+
+## Team PR guard
+
+Protect everyone who clones the repo, not just your Mac. Add this workflow (or run
+`bastion ci-setup --write`) and every pull request is checked on GitHub:
+
+```yaml
+# .github/workflows/bastion.yml
+name: Bastion
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+jobs:
+  bastion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: realanshuman/bastion@v4
+```
+
+A finding fails the check and is annotated on the exact file. False alarms go in a `.bastionignore` file,
+which is read from the **base** branch, so a pull request can't silence its own findings.
 
 ## Use it with AI agents
 
@@ -133,6 +185,7 @@ Once it's connected, your agent is told to check a repository before running `in
 | `bastion_check_path` | "Is it safe to run npm here?" — checks one project, usually in under a second |
 | `bastion_respond` | Investigates, contains what it can prove (with undo) and returns an incident report |
 | `bastion_incidents` · `bastion_incident` | Incident history and full reports |
+| `bastion_deps` · `bastion_history` | Checks a project's dependencies · hunts a repo's git history for planted payloads |
 | `bastion_status` | Is this Mac protected right now? |
 | `bastion_scan` | Sweeps every repo plus temp folders, processes and network |
 | `bastion_findings` · `activity` · `quarantine` · `lists` | Everything else Bastion knows, read-only |
@@ -142,6 +195,18 @@ Once it's connected, your agent is told to check a repository before running `in
 **Agents can make you safer, never less safe.** There's no tool to switch protection off, trust a host,
 ignore a path, unblock an address or restore quarantined files, so a confused or tricked agent can't do
 those things either. They're yours, and they ask you to confirm. Every change is logged and announced.
+
+**Hard-guard.** MCP asks an agent to check first; a hook makes it. Bastion adds a hook that runs before
+every shell command the agent starts, and blocks `install`, `dev`, `build` or `test` in a project that isn't
+safe — the agent is told why and what to do instead:
+
+```bash
+bastion hooks install claude    # Claude Code (~/.claude/settings.json) · "cursor" for Cursor · "all"
+bastion hooks status
+```
+
+Your existing settings are kept (a backup is saved next to the file), and the hook never approves anything
+on its own — commands still go through the agent's normal permission prompts.
 
 > Honest note: an agent that can run shell commands has your permissions and could, in principle, remove
 > Bastion itself. Bastion makes lowering protection explicit and loud rather than impossible.
@@ -157,6 +222,11 @@ bastion incidents               # incident history · incident [id] shows the re
 bastion undo [id]               # put back files Bastion cleaned, if it got one wrong
 bastion autonomy observe        # contain (default) · observe · off
 bastion repos                   # your git repos: branch, push guard, open findings
+bastion deps                    # check this project's dependencies (osv on: also known malicious versions)
+bastion history                 # hunt every branch, the reflog and deleted branches for payloads
+bastion branches                # local and pushed branches whose configs are infected
+bastion hooks install claude    # hard-guard Claude Code (or cursor, all)
+bastion ci-setup --write        # add the Team PR guard workflow to this repo
 bastion activity                # what Bastion caught or changed recently
 bastion enable watcher          # or schedule, exec-guard, git-guard, auto-respond; "disable" turns one off
 bastion allow add api.mycompany.com   # trust your own server
@@ -183,17 +253,19 @@ One entry per line; `#` starts a comment. Updates never overwrite your lists; ne
 2. **Detect & stop** — a watcher checks every ~12 seconds, kills malware loaders and connections to known
    attacker servers, and quarantines what they leave behind.
 3. **Respond** — the responder investigates, contains what it can prove and writes the incident report.
-4. **Scan** — a structural scan of your projects (config files, source files, `package.json` install hooks
-   and `.vscode` auto-run tasks) on demand, at login and every few hours.
+4. **Scan** — a structural scan of your projects (config files, source files, `package.json` install hooks,
+   `.vscode` auto-run tasks, dependencies, CI workflows and every branch) on demand, at login and every few hours.
 
-Everything runs on your Mac. Nothing is uploaded.
+Everything runs on your Mac. Nothing is uploaded — unless you turn on the online malware check, which sends
+package names and versions only.
 
 ## Honest limits
 
 - It's a **focused guard** for this family of supply-chain attacks and the mess they leave, not a full
   antivirus. Keep a general scanner around too.
-- It checks **your project's own** install hooks, not the hooks of every dependency deep in `node_modules`.
-  `npm install --ignore-scripts` is the belt-and-braces option.
+- The dependency guard catches malicious **install scripts**, odd **download sources** and (with osv.dev on)
+  **known** malicious versions. A brand-new package that hides its payload in ordinary library code can still
+  get through; `npm install --ignore-scripts` is the belt-and-braces option.
 - It protects **your machine**. If malicious code keeps arriving in a shared repo, fix it at the source —
   the incident's to-dos show you where.
 - It's **self-signed**, so the first launch shows an "unidentified developer" prompt (right-click → Open gets past it).
@@ -205,7 +277,8 @@ bash ~/.security-guard/uninstall.sh            # stop the background guard, keep
 bash ~/.security-guard/uninstall.sh --purge    # remove everything
 ```
 
-If you connected an agent, remove it there too (Claude Code: `claude mcp remove bastion`).
+If you connected an agent, remove it there too (Claude Code: `claude mcp remove bastion`), and run
+`bastion hooks remove all` first if you added the hard-guard.
 
 ## License
 

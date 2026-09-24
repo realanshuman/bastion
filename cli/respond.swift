@@ -34,14 +34,16 @@ let GIT_BIN: String? = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/Library
                         "/Applications/Xcode.app/Contents/Developer/usr/bin/git"].first { fm.isExecutableFile(atPath: $0) }
 let GIT_ENV = ["GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"]
 
-func gitData(_ repo: String, _ args: [String]) -> Data? {
+func gitData(_ repo: String, _ args: [String], timeout: TimeInterval = 30) -> Data? {
     guard let bin = GIT_BIN else { return nil }
     let r = runData(bin, ["--no-pager", "-C", repo, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
-                          "-c", "log.showSignature=false"] + args, timeout: 30, env: GIT_ENV)
+                          "-c", "log.showSignature=false"] + args, timeout: timeout, env: GIT_ENV)
     return r.code == 0 && !r.timedOut ? r.data : nil
 }
 
-func git(_ repo: String, _ args: [String]) -> String? { gitData(repo, args).map { String(decoding: $0, as: UTF8.self) } }
+func git(_ repo: String, _ args: [String], timeout: TimeInterval = 30) -> String? {
+    gitData(repo, args, timeout: timeout).map { String(decoding: $0, as: UTF8.self) }
+}
 
 struct Commit {
     let sha, author, authorEmail, committer, committerEmail, date, subject: String
@@ -91,6 +93,14 @@ func findingStillThere(_ f: [String: Any]) -> Bool {
     case "source_payload": return !payloadReasons(fm.contents(atPath: path) ?? Data(), config: false).isEmpty
     case "install_hook": check = "install_hook_suspicious"
     case "editor_autorun": check = "autorun_task"
+    case "ci_secret_exfiltration": check = "workflow_exfil"
+    case "untrusted_dependency_source": return readText(path).contains(f["detail"] as? String ?? "\u{0}")
+    case "known_malicious_package":
+        let spec = (f["detail"] as? String ?? "").split(separator: " ").first.map(String.init) ?? ""
+        return lockedPackages((path as NSString).deletingLastPathComponent).packages.contains { "\($0.name)@\($0.version)" == spec }
+    case "infected_branch":
+        guard let ref = f["ref"] as? String, let file = f["file"] as? String, let blob = gitData(path, ["cat-file", "-p", "\(ref):\(file)"]) else { return false }
+        return !payloadReasons(blob, config: true).isEmpty
     default: return true
     }
     return run("/bin/bash", ["-c", #". "$HOME/.security-guard/lib.sh" && "$0" "$1""#, check, path], timeout: 20).code == 0
@@ -321,6 +331,21 @@ func reflexEvents(since: Date?) -> [[String: String]] {
     return out
 }
 
+/// The installed folder of a flagged package (inside node_modules), if it's there
+func maliciousPackageDir(_ f: [String: Any]) -> String? {
+    guard let path = f["path"] as? String else { return nil }
+    if f["kind"] as? String == "malicious_dependency" {
+        let dir = (path as NSString).deletingLastPathComponent
+        return dir.contains("/node_modules/") ? dir : nil
+    }
+    let spec = (f["detail"] as? String ?? "").split(separator: " ").first.map(String.init) ?? ""
+    guard let pkg = packageName(fromSpec: spec) else { return nil }
+    let candidate = URL(fileURLWithPath: (path as NSString).deletingLastPathComponent + "/node_modules/" + pkg).resolvingSymlinksInPath().path
+    guard let d = fm.contents(atPath: candidate + "/package.json"), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+          "\(pkg)@\(o["version"] as? String ?? "")" == spec else { return nil }
+    return candidate
+}
+
 // MARK: - Incidents on disk
 
 func incidentDirs() -> [String] {
@@ -414,13 +439,26 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throw
     // 2. INVESTIGATE + CONTAIN — repo by repo
     var grouped: [String: [[String: Any]]] = [:]
     for f in found where f["scope"] as? String == "project" {
-        if let p = f["path"] as? String { grouped[repoRoot(of: p), default: []].append(f) }
+        if let p = f["path"] as? String { grouped[f["kind"] as? String == "infected_branch" ? p : repoRoot(of: p), default: []].append(f) }
     }
     for (repo, fs) in grouped.sorted(by: { $0.key < $1.key }) {
-        var files: [[String: Any]] = [], hooks: [[String: Any]] = []
+        var files: [[String: Any]] = [], hooks: [[String: Any]] = [], branches: [[String: Any]] = [], deps: [[String: Any]] = []
         var infectedSince: Double? = nil
         for f in fs {
             let kind = f["kind"] as? String ?? ""
+            if kind == "infected_branch" { branches.append(["ref": f["ref"] ?? "", "file": f["file"] ?? "", "commit": f["commit"] ?? ""]); continue }
+            if kind == "malicious_dependency" || kind == "known_malicious_package" {
+                deps.append(f)
+                signs.append("A malicious dependency is installed in \(tilde(repo)) — its install script ran when it was installed.")
+                if let pkg = maliciousPackageDir(f) {   // the installed package folder: moved aside, never deleted
+                    if mode == "contain", let q = quarantine(pkg, reason: kind, batch: batch, keepOriginal: false) {
+                        act("quarantine", pkg, "done", "Quarantined the malicious package \((pkg as NSString).lastPathComponent) from \(tilde(repo)).", ["stored_at": q])
+                    } else if mode != "contain" {
+                        act("quarantine", pkg, "proposed", "Quarantine the malicious package at \(tilde(pkg)).", ["how": "rm -rf \(shellPath(pkg))   # or reinstall with --ignore-scripts"])
+                    }
+                }
+                continue
+            }
             guard kind == "injected_config" || kind == "source_payload", let path = f["path"] as? String else { hooks.append(f); continue }
             let rel = path.hasPrefix(repo + "/") ? String(path.dropFirst(repo.count + 1)) : path
             let isConfig = kind == "injected_config"
@@ -519,7 +557,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throw
             }
         }
 
-        var entry: [String: Any] = ["path": repo, "hooks": hooks]
+        var entry: [String: Any] = ["path": repo, "hooks": hooks, "branches": branches, "dependencies": deps]
         let previous = repoCases.first { $0["path"] as? String == repo }
         let newPaths = Set(files.compactMap { $0["path"] as? String })
         entry["files"] = ((previous?["files"] as? [[String: Any]]) ?? []).filter { !newPaths.contains($0["path"] as? String ?? "") } + files
@@ -630,7 +668,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool) throw
     for s in signs where !uniqueSigns.contains(s) { uniqueSigns.append(s) }
     inc["mode"] = mode
     inc["updated"] = isoTime(Date())
-    inc["status"] = remaining.isEmpty ? "contained" : "open"
+    inc["status"] = remaining.filter { $0["kind"] as? String != "infected_branch" }.isEmpty ? "contained" : "open"
     inc["repos"] = repoCases
     inc["machine"] = machine
     inc["indicators"] = indicators
@@ -688,6 +726,17 @@ func buildTodos(_ inc: [String: Any]) -> [[String: String]] {
             todos.append(["title": "Clean the pushed branches of \(name)",
                           "why": "\(pushed.joined(separator: ", ")) still carr\(pushed.count == 1 ? "ies" : "y") the bad commit — anyone who pulls \(pushed.count == 1 ? "it" : "them") gets the malware.",
                           "cmd": "# after committing the fix, push each branch you use\ngit -C \(shellPath(repo)) push\n# and delete the ones you don't\ngit -C \(shellPath(repo)) push <remote> --delete <branch>"])
+        }
+        let infected = r["branches"] as? [[String: Any]] ?? []
+        if !infected.isEmpty {
+            todos.append(["title": "Clean the infected branch\(infected.count == 1 ? "" : "es") of \(name)",
+                          "why": infected.map { "\($0["ref"] as? String ?? "") (\($0["file"] as? String ?? ""))" }.joined(separator: ", ") + " — checking one out and running dev, build or test would run the malware.",
+                          "cmd": "# delete a branch you don't need, locally and on the server\ngit -C \(shellPath(repo)) branch -D <branch>\ngit -C \(shellPath(repo)) push <remote> --delete <branch>\n# or restore the file on that branch from a clean commit and commit the fix"])
+        }
+        if !(r["dependencies"] as? [[String: Any]] ?? []).isEmpty {
+            todos.append(["title": "Reinstall \(name)'s dependencies safely",
+                          "why": (r["dependencies"] as? [[String: Any]] ?? []).map { "\($0["title"] as? String ?? ""): \($0["detail"] as? String ?? "")" }.joined(separator: "; "),
+                          "cmd": "# pin or remove the flagged package in package.json first, then:\nrm -rf \(shellPath(repo + "/node_modules"))\nnpm --prefix \(shellPath(repo)) install --ignore-scripts"])
         }
         for h in r["hooks"] as? [[String: Any]] ?? [] {
             todos.append(["title": "\(h["title"] as? String ?? "Fix") in \(tilde(h["path"] as? String ?? ""))",

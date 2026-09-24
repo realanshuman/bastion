@@ -33,7 +33,7 @@ install_hook_suspicious(){ grep -E '"(preinstall|install|postinstall|prepare|pre
 # .vscode/tasks.json with runOn=folderOpen runs a command the moment the folder is opened in VS Code or Cursor
 autorun_task(){ grep -q '"folderOpen"' "$1" 2>/dev/null; }
 
-BASTION_IGNORE="$HOME/.security-guard/ignore.txt"
+BASTION_IGNORE="${BASTION_IGNORE:-$HOME/.security-guard/ignore.txt}"   # CI points this at the base branch's .bastionignore
 # benign references (docs, tests, detectors quoting a signature): any path containing an entry
 is_ignored(){
   [ -f "$BASTION_IGNORE" ] || return 1
@@ -57,6 +57,47 @@ remote_peers(){
     if (split($0, a, "->") < 2) next
     r = a[2]; sub(/ .*/, "", r); sub(/:[0-9]+$/, "", r); gsub(/\[/, "", r); gsub(/\]/, "", r)
     print $1, $2, r }' | sort -u
+}
+
+# --- dependencies and CI ---
+# tells of the self-spreading npm worms (Shai-Hulud style) inside install-time code or CI workflows
+BASTION_WORM_RE='shai-?hulud|sha1-?hulud|trufflehog|webhook\.site/|bun_environment\.js|setup_bun\.js'
+
+# packages under DIR/node_modules whose install scripts look malicious → "DEPHOOK|<package.json>|<reasons>"
+deps_modules_scan(){
+  local nm="$1/node_modules" pj line f reason target
+  [ -d "$nm" ] || return 0
+  while IFS= read -r pj; do
+    line=$(grep -E '"(preinstall|install|postinstall)"[[:space:]]*:' "$pj" 2>/dev/null) || continue
+    reason=""
+    printf '%s' "$line" | grep -qE "$BASTION_HOOK_RE" && reason="install-script"
+    printf '%s' "$line" | grep -qiE "$BASTION_WORM_RE" && reason="${reason:+$reason,}worm-marker"
+    # "node setup.js" → look inside the file the install script runs
+    for target in $(printf '%s' "$line" | grep -oE '(node|bun)[[:space:]]+[./A-Za-z0-9_-]+\.[cm]?js' | awk '{ print $2 }' | sort -u); do
+      f="$(dirname "$pj")/$target"
+      [ -f "$f" ] || continue
+      if grep -qE "$BASTION_MARKER_RE|$BASTION_SCRAMBLER_RE" "$f" 2>/dev/null; then reason="${reason:+$reason,}payload:$target"
+      elif grep -qiE "$BASTION_WORM_RE" "$f" 2>/dev/null; then reason="${reason:+$reason,}worm:$target"
+      elif [ "$(grep -oE '_0x[0-9a-f]{4,}' "$f" 2>/dev/null | head -300 | wc -l | tr -d ' ')" -ge 300 ]; then reason="${reason:+$reason,}obfuscated:$target"
+      fi
+    done
+    [ -n "$reason" ] && printf 'DEPHOOK|%s|%s\n' "$pj" "$reason"
+  done < <(find "$nm" -maxdepth 6 -type f -name package.json 2>/dev/null | tr '\n' '\0' | xargs -0 grep -lE '"(preinstall|install|postinstall)"[[:space:]]*:' 2>/dev/null)
+  return 0
+}
+
+# lockfile entries downloaded over plain http or from a raw IP (a local registry on localhost is fine) → "DEPURL|<lockfile>|<url>"
+deps_lock_scan(){
+  grep -oE '(resolved|tarball)"?[[:space:]:]+"?(http://[^"[:space:],}]+|https?://[0-9]{1,3}(\.[0-9]{1,3}){3}[^"[:space:],}]*)' "$1" 2>/dev/null \
+    | grep -oE 'https?://[^"[:space:],}]+' | grep -vE '^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?/' | sort -u | head -5 \
+    | while IFS= read -r url; do printf 'DEPURL|%s|%s\n' "$1" "$url"; done
+  return 0
+}
+
+# a GitHub Actions workflow that ships the repo's secrets out (how recent npm worms steal CI tokens)
+workflow_exfil(){
+  grep -qiE "$BASTION_WORM_RE|SHA1HULUD" "$1" 2>/dev/null && return 0
+  grep -qE 'toJSON\(secrets\)' "$1" 2>/dev/null && grep -qE 'curl|wget|Invoke-WebRequest|https?://' "$1" 2>/dev/null
 }
 
 # pids of node processes whose command line is an inline-code loader

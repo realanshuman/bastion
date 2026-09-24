@@ -12,6 +12,17 @@ let BASTION_CLI = HOME_DIR + "/.security-guard/bin/bastion"
 
 struct Box: @unchecked Sendable { let json: JSON }
 
+/// Runs several bastion calls at once and returns their answers in order.
+func bastionAll(_ calls: [[String]]) -> [Box] {
+    final class Slots: @unchecked Sendable { var items: [Box]; let lock = NSLock(); init(_ n: Int) { items = Array(repeating: Box(json: [:]), count: n) } }
+    let slots = Slots(calls.count)
+    DispatchQueue.concurrentPerform(iterations: calls.count) { i in
+        let b = Box(json: bastion(calls[i]))
+        slots.lock.lock(); slots.items[i] = b; slots.lock.unlock()
+    }
+    return slots.items
+}
+
 /// `bastion <args> --json`, decoded. The window is a person, so after it asks, it passes --yes for actions that lower protection.
 func bastion(_ args: [String]) -> JSON {
     guard FileManager.default.isExecutableFile(atPath: BASTION_CLI) else {
@@ -141,12 +152,15 @@ final class AppStore: ObservableObject {
     @Published var toast: String?
     @Published var confirm: Confirm?
     @Published var loaded = false
+    @Published var hooks: JSON = [:]
+    @Published var sheet: ResultSheetContent?
 
     func refresh() {
         Task {
             let r = await Task.detached(priority: .userInitiated) { () -> [Box] in
-                [["status"], ["incidents"], ["repos"], ["activity", "-n", "300"], ["quarantine"], ["lists"], ["connect"]].map { Box(json: bastion($0)) }
+                bastionAll([["status"], ["incidents"], ["repos"], ["activity", "-n", "300"], ["quarantine"], ["lists"], ["connect"], ["hooks", "status"]])
             }.value
+            hooks = r[7].json
             status = r[0].json
             incidents = r[1].json["incidents"] as? [JSON] ?? []
             repos = r[2].json["repos"] as? [JSON] ?? []
@@ -185,6 +199,16 @@ final class AppStore: ObservableObject {
             busy.remove("check:" + path)
             checks[path] = r
             flash(r["safe_to_run"] as? Bool == true ? "\((path as NSString).lastPathComponent) is safe to run." : "\((path as NSString).lastPathComponent) is not safe to run.")
+        }
+    }
+
+    /// Runs a read-only tool (history hunt, dependency check…) and shows the answer in a sheet.
+    func present(_ title: String, _ key: String, _ args: [String]) {
+        busy.insert(key)
+        Task {
+            let r = await Task.detached(priority: .userInitiated) { Box(json: bastion(args)) }.value.json
+            busy.remove(key)
+            sheet = ResultSheetContent(title: title, json: r)
         }
     }
 
@@ -478,6 +502,7 @@ struct MainWindow: View {
             Button(c.button, role: .destructive) { c.run() }
             Button("Cancel", role: .cancel) {}
         } message: { c in Text(c.message) }
+        .sheet(item: $store.sheet) { ResultSheet(content: $0) { store.sheet = nil } }
         .onAppear {
             store.refresh()
             // a Dock icon while the window is open, back to menu-bar-only when it closes
@@ -1137,7 +1162,20 @@ struct RepoRow: View {
             HStack(spacing: 4) {
                 Button(store.busy.contains("check:" + path) ? "Checking…" : "Check") { store.check(path) }
                     .buttonStyle(SecondaryButton()).disabled(store.busy.contains("check:" + path))
-                IconButton(icon: "folder", help: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                Menu {
+                    Button("Hunt git history") { store.present("History · \(repo["name"] as? String ?? "")", "history:" + path, ["history", path]) }
+                    Button("Check dependencies") { store.present("Dependencies · \(repo["name"] as? String ?? "")", "deps:" + path, ["deps", path]) }
+                    if repo["pr_guard"] as? Bool != true {
+                        Button("Add Team PR guard…") {
+                            store.ask("Add the PR guard to \(repo["name"] as? String ?? "")?", "Bastion writes .github/workflows/bastion.yml. Commit and push it yourself — every pull request is checked from then on.", button: "Add") {
+                                store.run("ci:" + path, ["ci-setup", path, "--write"], done: "Added .github/workflows/bastion.yml — commit and push it.")
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                } label: { Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold)).foregroundStyle(DT.dim).frame(width: 26, height: 26) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }.frame(width: 96, alignment: .trailing)
         }.padding(.horizontal, 16).frame(height: 50).hoverRow(radius: 0)
     }
@@ -1148,6 +1186,8 @@ struct RepoRow: View {
             badge(safe ? DT.green : DT.red, safe ? "Safe to run" : "\((c["findings"] as? [Any])?.count ?? 0) problem(s)")
         } else if let n = repo["findings"] as? Int, n > 0 {
             badge(DT.red, "\(n) finding\(n == 1 ? "" : "s")")
+        } else if let b = repo["infected_branches"] as? Int, b > 0 {
+            badge(DT.orange, "\(b) infected branch\(b == 1 ? "" : "es")")
         } else {
             badge(DT.green, "Clean")
         }
@@ -1284,6 +1324,16 @@ struct AgentsPage: View {
                             .font(uiFont(13)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionLabel(text: "Hard-guard")
+                    Text("Hooks that stop an agent's install, dev, build or test command before it runs in an unsafe repo — enforced, not just instructed.")
+                        .font(uiFont(12.5)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
+                    RowGroup {
+                        guardRow("claude", "Claude Code", "~/.claude/settings.json")
+                        Hairline()
+                        guardRow("cursor", "Cursor", "~/.cursor/hooks.json")
+                    }
+                }
                 setup("Claude Code", "Run once in a terminal.", "claude mcp add --scope user bastion -- \(short) mcp")
                 setup("Cursor · Claude Desktop · Windsurf", "Add to the mcpServers section of the app's MCP config.", "\"bastion\": { \"command\": \"\(bin)\", \"args\": [\"mcp\"] }")
                 setup("Codex CLI", "Add to ~/.codex/config.toml.", "[mcp_servers.bastion]\ncommand = \"\(bin)\"\nargs = [\"mcp\"]")
@@ -1308,6 +1358,28 @@ struct AgentsPage: View {
             }
         }
     }
+    private func guardRow(_ agent: String, _ name: String, _ file: String) -> some View {
+        let on = store.hooks[agent] as? Bool ?? false
+        return HStack(spacing: 12) {
+            Image(systemName: on ? "checkmark.shield.fill" : "shield").font(.system(size: 13)).foregroundStyle(on ? DT.green : DT.dim).frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(uiFont(13, .medium)).foregroundStyle(DT.text)
+                Text(on ? "Guarded — unsafe repos are blocked" : "Adds a hook to \(file) (a backup is kept)").font(uiFont(12)).foregroundStyle(DT.dim)
+            }
+            Spacer()
+            if store.busy.contains("hook:" + agent) { ProgressView().controlSize(.small).scaleEffect(0.7) }
+            if on {
+                Button("Remove") {
+                    store.ask("Remove the hard-guard from \(name)?", "Its agent will be able to run install and dev in unsafe repos again.", button: "Remove") {
+                        store.run("hook:" + agent, ["hooks", "remove", agent, "--yes"], done: "Removed the hard-guard from \(name).")
+                    }
+                }.buttonStyle(SecondaryButton())
+            } else {
+                Button("Add") { store.run("hook:" + agent, ["hooks", "install", agent], done: "\(name) is hard-guarded. Restart it to load the hook.") }.buttonStyle(PrimaryButton())
+            }
+        }.padding(.horizontal, 14).padding(.vertical, 12)
+    }
+
     private func setup(_ title: String, _ hint: String, _ code: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
@@ -1353,6 +1425,25 @@ struct SettingsPage: View {
                     }
                 }
                 block("Protection", "What runs in the background.") { ProtectionGroup(store: store) }
+                block("Online malware check", "Compares your exact package versions with osv.dev's list of malicious packages.") {
+                    RowGroup {
+                        HStack(spacing: 12) {
+                            Image(systemName: "network").font(.system(size: 13)).foregroundStyle(DT.dim).frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Check dependencies against osv.dev").font(uiFont(13, .medium)).foregroundStyle(DT.text)
+                                Text("Sends package names and versions — never your code. Off by default.").font(uiFont(12)).foregroundStyle(DT.dim)
+                            }
+                            Spacer()
+                            Toggle("osv", isOn: Binding(get: { store.status["osv"] as? Bool ?? false }, set: { on in
+                                if on {
+                                    store.ask("Turn on the online malware check?", "Bastion will send package names and versions (never your code) to osv.dev.", button: "Turn on") {
+                                        store.run("osv", ["osv", "on", "--yes"], done: "Online malware check is on.")
+                                    }
+                                } else { store.run("osv", ["osv", "off"], done: "Online malware check is off.") }
+                            })).labelsHidden().toggleStyle(ThemeSwitch())
+                        }.padding(.horizontal, 14).padding(.vertical, 12)
+                    }
+                }
                 block("Allowlist", "Your own servers — never treated as a threat.") {
                     ListEditor(store: store, key: "allowlist", command: "allow", placeholder: "api.mycompany.com")
                 }
@@ -1475,8 +1566,17 @@ struct CommandPalette: View {
             let id = inc["id"] as? String ?? ""
             list.append(Command(group: "Incidents", title: "\(id)  \(withoutTodoCount(inc["summary"]))", icon: "exclamationmark.shield") { router.open(incident: id) })
         }
+        for (agent, name) in [("claude", "Claude Code"), ("cursor", "Cursor")] where store.hooks[agent] as? Bool != true {
+            list.append(Command(group: "Actions", title: "Hard-guard \(name)", icon: "lock.shield") { store.run("hook:" + agent, ["hooks", "install", agent], done: "\(name) is hard-guarded.") })
+        }
         for repo in store.repos {
-            let path = repo["path"] as? String ?? ""
+            let path = repo["path"] as? String ?? "", name = repo["name"] as? String ?? ""
+            list.append(Command(group: "Repositories", title: "Hunt git history in \(name)", icon: "clock.arrow.circlepath", hint: tildePath(path)) {
+                store.present("History · \(name)", "history:" + path, ["history", path])
+            })
+            list.append(Command(group: "Repositories", title: "Check dependencies in \(name)", icon: "shippingbox", hint: tildePath(path)) {
+                store.present("Dependencies · \(name)", "deps:" + path, ["deps", path])
+            })
             list.append(Command(group: "Repositories", title: "Check \(repo["name"] as? String ?? "")", icon: "folder", hint: tildePath(path)) {
                 router.go(.repos); store.check(path)
             })
@@ -1541,4 +1641,59 @@ struct CommandPalette: View {
     }
 
     private func close() { withAnimation(.easeOut(duration: 0.12)) { router.palette = false } }
+}
+
+// MARK: - Result sheet (history hunt, dependency check)
+
+struct ResultSheetContent: Identifiable { let id = UUID(); let title: String; let json: JSON }
+
+struct ResultSheet: View {
+    let content: ResultSheetContent
+    let close: () -> Void
+    var body: some View {
+        let j = content.json
+        VStack(spacing: 0) {
+            HStack {
+                Text(content.title).font(uiFont(14, .semibold)).foregroundStyle(DT.text)
+                Spacer()
+                Button("Done", action: close).buttonStyle(SecondaryButton()).keyboardShortcut(.defaultAction)
+            }.padding(.horizontal, 18).frame(height: 52)
+            Hairline()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text((j["error"] as? String) ?? (j["summary"] as? String) ?? "").font(uiFont(14, .medium)).foregroundStyle(DT.text).fixedSize(horizontal: false, vertical: true)
+                    section("Findings", j["findings"]) { f in (f["title"] as? String ?? "", tildePath(f["path"] as? String ?? "") + "  " + (f["detail"] as? String ?? ""), f["remediation"] as? String ?? "") }
+                    section("Commits that brought a payload in", j["introduced"]) { e in
+                        ("\(e["short"] as? String ?? "")  \(e["file"] as? String ?? "")", "\(e["committer"] as? String ?? "") <\(e["committer_email"] as? String ?? "")> · \(shortTime(e["date"])) · \(e["subject"] as? String ?? "")",
+                         "On: " + (e["refs"] as? [String] ?? []).joined(separator: ", "))
+                    }
+                    section("Branches that still carry it", j["infected_branches"]) { b in (b["ref"] as? String ?? "", b["file"] as? String ?? "", "") }
+                    section("Left over from deleted branches", j["unreachable"]) { o in ("\(o["short"] as? String ?? "")  \(o["file"] as? String ?? "")", o["subject"] as? String ?? "", "") }
+                    if let note = j["note"] as? String { Text(note).font(uiFont(12)).foregroundStyle(DT.dim) }
+                    if let e = j["online_error"] as? String { Text(e).font(uiFont(12)).foregroundStyle(DT.orange) }
+                }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(width: 640, height: 520).background(DT.panel).environment(\.colorScheme, .dark)
+    }
+
+    @ViewBuilder private func section(_ title: String, _ raw: Any?, _ row: @escaping (JSON) -> (String, String, String)) -> some View {
+        let items = raw as? [JSON] ?? []
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: title, trailing: "\(items.count)")
+                RowGroup {
+                    ForEach(Array(items.enumerated()), id: \.offset) { i, item in
+                        if i > 0 { Hairline() }
+                        let r = row(item)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(r.0).font(codeFont(12, .medium)).foregroundStyle(DT.text).textSelection(.enabled)
+                            if !r.1.isEmpty { Text(r.1).font(uiFont(12)).foregroundStyle(DT.dim).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+                            if !r.2.isEmpty { Text(r.2).font(uiFont(12)).foregroundStyle(DT.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true) }
+                        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
 }

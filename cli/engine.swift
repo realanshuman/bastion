@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "4.0.0"
+let VERSION = "4.1.0"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -164,6 +164,26 @@ let KINDS: [String: Kind] = [
         why: "A process is connected to an address on the blocklist (a known command-and-control server).",
         fix: "Find it with `lsof -nP -i | grep <target>` and quit that process. The real-time watcher kills node-based processes that do this automatically.",
         autoHandled: false),
+    "DEPHOOK": Kind(id: "malicious_dependency", title: "Malicious install script in a dependency", severity: "critical", scope: "project",
+        why: "A package in node_modules runs code during install that downloads or decodes code, contacts a raw IP, or carries a known npm-worm marker. Install scripts run automatically on npm install.",
+        fix: "Assume it already ran: rotate the secrets that were on this Mac, from a clean device. Remove or pin the package to a safe version, delete node_modules and reinstall with --ignore-scripts.",
+        autoHandled: false),
+    "DEPMAL": Kind(id: "known_malicious_package", title: "Known malicious package version", severity: "critical", scope: "project",
+        why: "osv.dev lists this exact package version as malicious (a published compromise).",
+        fix: "Pin the package to a version osv.dev doesn't flag, delete node_modules and reinstall. If it was installed with scripts, rotate the secrets that were on this Mac.",
+        autoHandled: false),
+    "DEPURL": Kind(id: "untrusted_dependency_source", title: "Dependency downloaded from an untrusted address", severity: "high", scope: "project",
+        why: "The lockfile downloads a package over plain http or from a raw IP address, so whoever controls that address can swap the code.",
+        fix: "Remove that entry from the lockfile and reinstall from the registry, then check the commit that added it.",
+        autoHandled: false),
+    "WORKFLOW": Kind(id: "ci_secret_exfiltration", title: "CI workflow that ships secrets out", severity: "critical", scope: "project",
+        why: "A GitHub Actions workflow dumps the repository's secrets or posts to a data-collection endpoint — how recent npm worms steal CI tokens and spread.",
+        fix: "Delete the workflow, check who pushed it, and rotate every secret the repository has.",
+        autoHandled: false),
+    "BRANCH": Kind(id: "infected_branch", title: "Payload on a branch", severity: "high", scope: "project",
+        why: "A branch carries an injected build config. Checking it out and running dev, build or test would run the malware.",
+        fix: "Don't check out or merge <target> until it's cleaned. Delete it (and its copy on the remote) if you don't need it; otherwise restore the file from a clean commit on that branch.",
+        autoHandled: false),
 ]
 
 func makeFinding(_ code: String, _ target: String, _ detail: String) -> [String: Any] {
@@ -176,6 +196,11 @@ func makeFinding(_ code: String, _ target: String, _ detail: String) -> [String:
         let pids = target.split(separator: ",").compactMap { Int($0.trimmed) }
         f["pids"] = pids; shown = pids.map(String.init).joined(separator: " ")
     case "NETWORK": f["ip"] = target
+    case "BRANCH":   // target = repo, detail = "<ref> <file> <commit>"
+        let parts = detail.split(separator: " ").map(String.init)
+        f["path"] = target
+        if parts.count >= 2 { f["ref"] = parts[0]; f["file"] = parts[1]; shown = parts[0] }
+        if parts.count >= 3 { f["commit"] = parts[2] }
     default: f["path"] = target
     }
     f["remediation"] = k.fix.replacingOccurrences(of: "<target>", with: shown)
@@ -230,8 +255,9 @@ func reposReport() -> [String: Any] {
             remote = line.trimmed.dropFirst(6).replacingOccurrences(of: #"://[^/@\s]+@"#, with: "://", options: .regularExpression)
         }
         let mine = open.filter { ($0["path"] as? String ?? "").hasPrefix(repo + "/") }
+        let branches = (last?["findings"] as? [[String: Any]] ?? []).filter { $0["kind"] as? String == "infected_branch" && $0["path"] as? String == repo }
         return ["path": repo, "name": (repo as NSString).lastPathComponent, "branch": branch, "remote": remote,
-                "git_guard": gitGuardState(repo), "findings": mine.count]
+                "git_guard": gitGuardState(repo), "findings": mine.count, "infected_branches": branches.count, "pr_guard": prGuardInstalled(repo)]
     }
     return ["repos": repos, "last_scan": last?["time"] ?? NSNull()]
 }
@@ -423,14 +449,20 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     for c in c2 {
         var f = makeFinding("NETWORK", c["ip"] as? String ?? "", "c2-connection"); f["process"] = c["process"]; f["pid"] = c["pid"]; threats.append(f)
     }
-    for f in (last?["findings"] as? [[String: Any]] ?? []) where f["path"] != nil && stillPresent(f) { threats.append(f) }
+    // a payload on a branch that isn't checked out is latent: it's reported and becomes a to-do, not an active threat
+    for f in (last?["findings"] as? [[String: Any]] ?? []) where f["path"] != nil && f["kind"] as? String != "infected_branch" && stillPresent(f) { threats.append(f) }
 
     let protection: [String: Any] = ["watcher": agents.contains(WATCH_LABEL), "scheduled_scan": agents.contains(SCAN_LABEL),
                                      "exec_guard": execGuardOn()]
     var out: [String: Any] = ["version": VERSION, "engine": ENGINE, "posture": threats.isEmpty ? "protected" : "at_risk",
                               "active_threats": threats, "protection": protection, "quarantine_count": quarantine.count]
     if let last {
-        var ls: [String: Any] = ["result": last["result"] ?? "unknown", "clean": last["clean"] ?? false, "log": last["log"] ?? ""]
+        // infected branches are latent (reported as to-dos), so they don't make the last scan "not clean"
+        let found = last["findings"] as? [[String: Any]] ?? []
+        let branches = found.filter { $0["kind"] as? String == "infected_branch" }.count
+        let clean = (last["clean"] as? Bool ?? false) || (!found.isEmpty && branches == found.count)
+        var ls: [String: Any] = ["result": clean && branches > 0 ? "CLEAN — \(branches) INFECTED BRANCH\(branches == 1 ? "" : "ES")" : last["result"] ?? "unknown",
+                                 "clean": clean, "infected_branches": branches, "log": last["log"] ?? ""]
         if let t = last["time"] { ls["time"] = t }
         out["last_scan"] = ls
     } else { out["last_scan"] = NSNull() }
@@ -444,6 +476,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     if threats.isEmpty && !(protection["watcher"] as? Bool ?? false) { summary += " The real-time watcher is off (bastion_enable watcher turns it on)." }
     if last == nil { summary += " No scan has run yet." }
     out["autonomy"] = autonomy()
+    out["osv"] = osvEnabled()
     if let i = currentIncident() {
         let brief = incidentBrief(i)
         out["incident"] = brief
@@ -460,13 +493,18 @@ func checkPath(_ raw: String) throws -> [String: Any] {
     let r = run("/bin/bash", [engine("scanner.sh"), dir], timeout: 300)
     if r.timedOut { throw Failure("The check timed out after 5 minutes. Is \(dir) a single project folder?") }
     let all = parseFindings(r.out)
-    let project = all.filter { ($0["scope"] as? String) == "project" }
+    let project = all.filter { ($0["scope"] as? String) == "project" && $0["kind"] as? String != "infected_branch" }
+    let branches = all.filter { $0["kind"] as? String == "infected_branch" }
     let machine = all.filter { ($0["scope"] as? String) == "machine" }
     var out: [String: Any] = [
-        "path": dir, "safe_to_run": project.isEmpty, "findings": project, "machine_threats": machine,
-        "checked": ["build configs", "source files", "npm install hooks", "editor auto-run tasks"],
+        "path": dir, "safe_to_run": project.isEmpty, "findings": project, "machine_threats": machine, "infected_branches": branches,
+        "checked": ["build configs", "source files", "npm install hooks", "editor auto-run tasks", "CI workflows", "other branches",
+                    "dependencies (install scripts, lockfile sources" + (osvEnabled() ? ", osv.dev)" : ")")],
         "duration_ms": Int(Date().timeIntervalSince(started) * 1000),
     ]
+    if !branches.isEmpty {
+        out["branch_advice"] = "Don't check out or merge these branches until they're cleaned: " + branches.compactMap { $0["ref"] as? String }.joined(separator: ", ") + "."
+    }
     out["advice"] = project.isEmpty
         ? "Nothing suspicious in this project. OK to run install, dev, build and test here."
         : "Do not run install, dev, build, test or codegen here until these findings are fixed. Show the user each finding's remediation."

@@ -56,7 +56,12 @@ case "$name" in
     case " $* " in *" --ignore-scripts "*) ;; *)
       [ "${npm_config_ignore_scripts:-}" = "true" ] || case " $* " in
         *" install "*|*" i "*|*" ci "*|*" add "*|"  ")
-          [ "$name" = "npx" ] || { bad=$(scan_hooks "$PWD") && { log "suspicious install hook in $bad"; echo "🛡 Bastion blocked '$name $*' — suspicious install hook in $bad" >&2; echo "   Review the preinstall/postinstall script first, or install with --ignore-scripts." >&2; exit 1; }; } ;;
+          [ "$name" = "npx" ] || { bad=$(scan_hooks "$PWD") && { log "suspicious install hook in $bad"; echo "🛡 Bastion blocked '$name $*' — suspicious install hook in $bad" >&2; echo "   Review the preinstall/postinstall script first, or install with --ignore-scripts." >&2; exit 1; }; }
+          # lockfile sources and (if turned on) known-malicious versions from osv.dev
+          if [ "$name" != "npx" ] && [ -x "$HOME/.security-guard/bin/bastion" ]; then
+            "$HOME/.security-guard/bin/bastion" deps "$PWD" --preinstall --quiet >/dev/null 2>&1
+            [ $? -eq 2 ] && { log "unsafe dependencies in $PWD"; echo "🛡 Bastion blocked '$name $*' — the lockfile pulls a known-malicious package or downloads from an untrusted address." >&2; echo "   Details: bastion deps" >&2; exit 1; }
+          fi ;;
       esac ;;
     esac ;;
 esac

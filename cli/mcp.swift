@@ -27,7 +27,7 @@ let TOOLS: [[String: Any]] = [
      "description": "Is this Mac protected right now? Returns posture (protected / at_risk), active threats with fixes, which protections are on, git push-guard coverage, the last scan result and quarantine count. Read-only, a few seconds.",
      "inputSchema": schema(), "annotations": annotations("Security status", readOnly: true)],
     ["name": "bastion_check_path", "title": "Preflight a project",
-     "description": "Check a project folder before running npm/pnpm/yarn/bun install, dev, build, test or codegen in it. Looks for injected build configs, malware code in source files, suspicious npm install hooks and editor auto-run tasks. Read-only, usually a few seconds. safe_to_run=false means: do not run those commands.",
+     "description": "Check a project folder before running npm/pnpm/yarn/bun install, dev, build, test or codegen in it. Looks for injected build configs, malware code in source files, suspicious npm install hooks, malicious dependencies, CI workflows that leak secrets and editor auto-run tasks, and lists other branches that carry a payload. Read-only, usually a few seconds. safe_to_run=false means: do not run those commands.",
      "inputSchema": schema(["path": ["type": "string", "description": "Absolute path of the project folder (~ is allowed)."]], required: ["path"]),
      "annotations": annotations("Preflight a project", readOnly: true)],
     ["name": "bastion_scan", "title": "Scan for malware",
@@ -69,6 +69,14 @@ let TOOLS: [[String: Any]] = [
      "description": "One incident in full — evidence, what Bastion did, the to-do list and the Markdown report. Defaults to the latest. Read-only.",
      "inputSchema": schema(["id": ["type": "string", "description": "Incident id, e.g. INC-20260924-203512 (default: latest)."]]),
      "annotations": annotations("Incident report", readOnly: true)],
+    ["name": "bastion_deps", "title": "Check dependencies",
+     "description": "Dependency guard for one project: install scripts in node_modules that fetch, decode or obfuscate code (npm-worm patterns), lockfile entries downloaded over http or from raw IPs, and — only if the user turned it on — exact versions that osv.dev lists as malicious. Read-only.",
+     "inputSchema": schema(["path": ["type": "string", "description": "Absolute path of the project folder."]], required: ["path"]),
+     "annotations": annotations("Check dependencies", readOnly: true)],
+    ["name": "bastion_history", "title": "Hunt git history",
+     "description": "Every payload a repository's git history remembers: commits on any branch, tag, stash or reflog that brought one in (with the identity), branch tips that still carry one, and commits left over from deleted branches. Read-only; can take a minute on big repos.",
+     "inputSchema": schema(["path": ["type": "string", "description": "Absolute path of the git repository."]], required: ["path"]),
+     "annotations": annotations("Hunt git history", readOnly: true)],
     ["name": "bastion_block_indicator", "title": "Block an attacker address",
      "description": "Add an IP address to the blocklist — only when a Bastion incident found it in malware evidence on this Mac. Local, private and allowlisted addresses are refused. The user can block anything else themselves.",
      "inputSchema": schema(["ip": ["type": "string"], "incident": ["type": "string", "description": "Incident id holding the evidence (default: any open incident)."]], required: ["ip"]),
@@ -104,6 +112,12 @@ func callTool(_ name: String, _ a: [String: Any]) throws -> [String: Any] {
         var out = inc
         out["report_markdown"] = reportMarkdown(inc)
         return out
+    case "bastion_deps":
+        guard let p = a["path"] as? String else { throw Failure("`path` is required.") }
+        return try depsReport(p, online: nil, preinstall: false)
+    case "bastion_history":
+        guard let p = a["path"] as? String else { throw Failure("`path` is required.") }
+        return try historyHunt(p)
     case "bastion_block_indicator":
         guard let ip = a["ip"] as? String else { throw Failure("`ip` is required.") }
         return try blockIndicator(ip.trimmed, incident: a["incident"] as? String)

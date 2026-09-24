@@ -1,0 +1,16 @@
+name: Bastion supply-chain guard
+description: Fails a pull request that adds hidden malware to build configs, npm install hooks, dependencies, editor tasks or CI workflows.
+author: Bastion contributors
+branding:
+  icon: shield
+  color: green
+inputs:
+  path:
+    description: Folder to scan (default: the whole checkout)
+    required: false
+    default: .
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: bash "$GITHUB_ACTION_PATH/ci/bastion-ci.sh" "${{ inputs.path }}"
