@@ -112,6 +112,8 @@ beside it. Light, dark, or the same as your Mac.
   its history, check its dependencies or add the Team PR guard from the **⋯** menu.
 - **Activity**, **Quarantine**, **AI agents** (connect in one click, add the hard-guard) and **Settings**
   (appearance, auto-respond, protections, the online malware check, your lists).
+- **How it works**: a guide inside the app that explains every feature in plain words, what it does and why it
+  helps you, with each one's live status and a button to turn it on.
 - **One status everywhere**: *All clear*, *N to clean up* (nothing is running) or *Act now*, the same in the
   window, the menu-bar panel and the menu-bar icon.
 - Keyboard: **⌘K** search or ask, **⌘1–7** pages, **⌘[** and **⌘]** back and forward, **⌘R** refresh.

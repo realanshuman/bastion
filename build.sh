@@ -19,7 +19,7 @@ universal(){
 }
 
 echo "compiling app…"
-universal "$APP/Contents/MacOS/Bastion" 14.0 -parse-as-library "$HERE/app/SecurityGuard.swift" "$HERE/app/Theme.swift" "$HERE/app/Window.swift" "$HERE/app/Agent.swift"
+universal "$APP/Contents/MacOS/Bastion" 14.0 -parse-as-library "$HERE/app/SecurityGuard.swift" "$HERE/app/Theme.swift" "$HERE/app/Window.swift" "$HERE/app/Agent.swift" "$HERE/app/Guide.swift"
 echo "compiling cli…"
 universal "$HERE/bin/bastion" 13.0 "$HERE"/cli/*.swift
 cp "$HERE/bin/bastion" "$APP/Contents/Helpers/bastion"

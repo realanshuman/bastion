@@ -110,7 +110,7 @@ func said(_ e: JSON) -> String { (e["said"] as? String).flatMap { $0.isEmpty ? n
 // MARK: - Navigation
 
 enum Pane: String, CaseIterable, Identifiable {
-    case home, incidents, repos, activity, quarantine, agents, settings
+    case home, incidents, repos, activity, quarantine, agents, settings, guide
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -121,6 +121,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .quarantine: return "Quarantine"
         case .agents: return "AI agents"
         case .settings: return "Settings"
+        case .guide: return "How it works"
         }
     }
     var icon: String {
@@ -132,6 +133,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .quarantine: return "archivebox"
         case .agents: return "sparkles"
         case .settings: return "gearshape"
+        case .guide: return "book.closed"
         }
     }
     var key: Character { Character("\((Pane.allCases.firstIndex(of: self) ?? 0) + 1)") }
@@ -489,6 +491,7 @@ struct MainWindow: View {
         case .quarantine: QuarantinePage(store: store)
         case .agents: AgentsPage(store: store)
         case .settings: SettingsPage(store: store)
+        case .guide: GuidePage(store: store)
         }
     }
 
@@ -560,6 +563,8 @@ struct Sidebar: View {
                 header("Connect")
                 SideItem(pane: .agents, selected: router.pane == .agents) { router.go(.agents) }
                 SideItem(pane: .settings, selected: router.pane == .settings) { router.go(.settings) }
+                header("Learn")
+                SideItem(pane: .guide, selected: router.pane == .guide) { router.go(.guide) }
             }.padding(.top, 16)
             Spacer(minLength: 16)
             callout
