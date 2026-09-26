@@ -38,7 +38,7 @@
     --gutter: clamp(16px, 4vw, 32px);
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased; padding-inline: var(--gutter); }
   a { color: inherit; }
   img { max-width: 100%; display: block; }
@@ -69,8 +69,8 @@
   h1, h2, h3 { margin: 0; text-wrap: balance; }
   /* display type like the reference: a regular-weight grotesque (Inter Display at large sizes), tight tracking */
   h1, h2 { font-family: var(--display); font-optical-sizing: auto; font-weight: 420; }
-  h1 { font-size: clamp(2.6rem, 6vw, 4.4rem); line-height: 1.04; letter-spacing: -0.03em; }
-  h2 { font-size: clamp(2.05rem, 4vw, 3.1rem); line-height: 1.08; letter-spacing: -0.028em; }
+  h1 { font-size: clamp(2.15rem, 5.4vw + 0.5rem, 4.4rem); line-height: 1.04; letter-spacing: -0.03em; }
+  h2 { font-size: clamp(1.8rem, 3.4vw + 0.5rem, 3.1rem); line-height: 1.08; letter-spacing: -0.028em; }
   h3 { font-size: 1.12rem; line-height: 1.3; font-weight: 600; letter-spacing: -0.012em; }
   p { margin: 0; }
   .sub { color: var(--muted); font-size: clamp(1.05rem, 1.6vw, 1.25rem); max-width: 36em; text-wrap: pretty; }
@@ -94,6 +94,8 @@
   .hero .sub { margin: 22px auto 0; }
   .ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 34px; }
   .small { margin-top: 18px; font-size: 14px; color: var(--muted); }
+  .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 10px; }
+  .meta span + span::before { content: "·"; margin-right: 10px; }
   .window { margin: clamp(44px, 6vw, 64px) auto 0; max-width: 1040px; border-radius: 16px 16px 0 0; overflow: hidden; background: #0e0f11;
     box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04), 0 30px 80px -30px rgba(16, 24, 20, 0.45); border: 1px solid rgba(0, 0, 0, 0.08); border-bottom: 0; }
   .window .bar { height: 38px; display: flex; align-items: center; gap: 7px; padding-inline: 14px; background: #16171a; }
@@ -127,10 +129,12 @@
   .code .n { color: #4b4e54; text-align: right; padding-right: 14px; }
   .code .hit { background: linear-gradient(90deg, rgba(229, 72, 77, 0), rgba(229, 72, 77, 0.16) 30%); }
   .code .hit .n { color: #ff7478; }
-  .gap { display: inline-block; vertical-align: middle; width: 36%; margin-inline: 10px; border-top: 1px dashed rgba(255, 116, 120, 0.7); position: relative; }
-  .gap b { position: absolute; left: 50%; top: -11px; transform: translateX(-50%); font: 500 11px/1 var(--mono); color: #ff7478; background: #2a1517; padding: 4px 7px; border-radius: 6px; }
-  .code .hidden { color: #ff7478; }
-  .found { margin: 14px 14px 0; display: flex; align-items: center; gap: 10px; background: #1d1f22; border-radius: 10px; padding: 10px 12px; font: 400 13px/1.4 var(--sans); color: #d7d6d2; white-space: normal; }
+  .line8 { display: flex; align-items: center; gap: 10px; min-width: 0; padding-right: 14px; }
+  .gap { flex: 1 1 auto; min-width: 104px; height: 0; border-top: 1px dashed rgba(255, 116, 120, 0.7); position: relative; }
+  .gap b { position: absolute; left: 50%; top: -11px; transform: translateX(-50%); white-space: nowrap; font: 500 11px/1 var(--mono); color: #ff7478; background: #2a1517; padding: 4px 7px; border-radius: 6px; }
+  .code .hidden { color: #ff7478; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .found { margin: 14px 14px 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; background: #1d1f22; border-radius: 10px; padding: 10px 12px; font: 400 13px/1.45 var(--sans); color: #d7d6d2; white-space: normal; }
+  .found code { white-space: nowrap; color: #fff; }
 
   /* developers */
   .devs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
@@ -154,17 +158,52 @@
   footer a { text-decoration: none; color: var(--muted); }
   footer a:hover { color: var(--ink); }
 
+  /* tablets and small laptops: steps and cards read as rows */
   @media (max-width: 900px) {
     .links { display: none; }
-    .steps, .devs { grid-template-columns: 1fr; }
+    .steps { grid-template-columns: 1fr; gap: 28px; }
+    .step { grid-template-columns: minmax(0, 0.95fr) minmax(0, 1fr); grid-template-rows: auto auto 1fr; column-gap: 28px; row-gap: 8px; align-items: start; }
+    .step .stage { grid-row: 1 / span 3; height: 200px; }
+    .step .num { margin-top: 18px; }
+    .devs { grid-template-columns: 1fr; }
     .trick { grid-template-columns: 1fr; }
-    .trust { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .trust { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 28px; }
   }
-  @media (max-width: 520px) {
+  /* phones */
+  @media (max-width: 600px) {
+    body { font-size: 16px; }
+    .nav .wrap { height: 56px; }
     .nav .btn:not(.dark) { display: none; }
+    .hero { padding-top: 8px; }
+    .glow { border-radius: 24px; padding: 40px 16px 0; }
+    .pill { font-size: 13px; margin-bottom: 20px; }
+    .hero .sub { margin-top: 16px; }
+    .ctas { flex-direction: column; align-items: stretch; width: 100%; max-width: 360px; margin-inline: auto; margin-top: 28px; }
+    .ctas .btn { height: 50px; font-size: 16px; }
+    .meta { flex-direction: column; align-items: center; }
+    .meta span + span::before { content: none; }
+    /* the app shot: zoom into the first item so it stays readable */
+    .window { margin-top: 36px; height: 330px; border-radius: 14px 14px 0 0; }
+    .window .bar { height: 30px; }
+    .window .bar i { width: 9px; height: 9px; }
+    .window img { width: 250%; max-width: none; aspect-ratio: auto; height: auto; transform: translateX(-23%); }
+    .step { grid-template-columns: 1fr; grid-template-rows: none; }
+    .step .stage { grid-row: auto; height: 190px; }
+    .step .num { margin-top: 2px; }
+    .trick { border-radius: 22px; padding: 28px 18px; }
+    .code { font-size: 12.5px; }
+    .code .l { grid-template-columns: 30px 1fr; }
+    .code .n { padding-right: 10px; }
+    .gap { min-width: 96px; }
+    .dev { padding: 20px; }
     .trust { grid-template-columns: 1fr; }
-    .code { font-size: 12px; }
-    .gap { width: 22%; }
+    .end { border-radius: 24px; padding: 44px 16px; }
+    footer .wrap { gap: 10px 20px; }
+  }
+  /* big touch targets on touch screens */
+  @media (pointer: coarse) {
+    .btn.sm { height: 42px; padding-inline: 18px; }
+    .links a { padding-block: 10px; }
   }
   @media (prefers-reduced-motion: no-preference) {
     .gap { animation: stretch 1.6s cubic-bezier(0.2, 0.7, 0.2, 1) 0.4s both; transform-origin: left; }
@@ -204,7 +243,7 @@
         </a>
         <a class="btn" href="#developers">For developers</a>
       </div>
-      <p class="small">Works with npm, pnpm, yarn and bun · macOS 14 or later</p>
+      <p class="small meta"><span>Works with npm, pnpm, yarn and bun</span><span>macOS 14 or later</span></p>
       <div class="window">
         <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
         <img src="assets/needs-you.jpg" width="2360" height="1520" alt="The Bastion app showing what needs you: in the storefront project, Commit the fix on main and Push the fix to origin/main, each with proof of where the hidden code is and a fix button.">
@@ -266,8 +305,8 @@
         <div class="l"><span class="n">5</span><span>    tailwindcss: {},</span></div>
         <div class="l"><span class="n">6</span><span>    autoprefixer: {},</span></div>
         <div class="l"><span class="n">7</span><span>  },</span></div>
-        <div class="l hit"><span class="n">8</span><span>};<span class="gap"><b>2,000 spaces</b></span><span class="hidden">global.o='1-183';var…</span></span></div>
-        <div class="found"><span class="no"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 6v7M12 17.5v.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg></span>Bastion found hidden code on line 8 and blocked <code>npm run dev</code>.</div>
+        <div class="l hit"><span class="n">8</span><span class="line8"><span>};</span><span class="gap"><b>2,000 spaces</b></span><span class="hidden">global.o='1-183';var _$_d8bf=…</span></span></div>
+        <div class="found"><span class="no"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 6v7M12 17.5v.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg></span><span>Bastion found hidden code on line 8 and blocked <code>npm run dev</code>.</span></div>
       </div>
     </div>
   </section>
