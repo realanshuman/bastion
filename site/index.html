@@ -4,11 +4,11 @@
 <title>Bastion</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Bastion is a security agent for your Mac. It watches your JavaScript projects, stops hidden malware before it runs, and tells you in plain words what to do next. Free and open source.">
+<meta name="description" content="Bastion is a security agent for your Mac. It watches your JavaScript projects, stops hidden malware before it runs, and helps you fix it in one click. Free and open source.">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Bastion: the security agent that keeps malware out of your code">
-<meta property="og:description" content="Watches your projects, stops hidden malware before it runs, and tells you in plain words what to do next. Free and open source for macOS.">
+<meta property="og:description" content="Watches your projects, stops hidden malware before it runs, and helps you fix it in one click. Free and open source for macOS.">
 <meta property="og:url" content="https://bastion-neon.vercel.app/">
 <meta property="og:image" content="https://bastion-neon.vercel.app/assets/og.jpg">
 <meta name="twitter:card" content="summary_large_image">
@@ -43,7 +43,6 @@
   body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased; padding-inline: var(--gutter); }
   a { color: inherit; }
   img { max-width: 100%; display: block; }
-  [hidden] { display: none !important; }
   code { font-family: var(--mono); font-size: 0.88em; }
   :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 8px; }
   .wrap { max-width: 1120px; margin-inline: auto; }
@@ -92,34 +91,17 @@
   .pill { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding-inline: 12px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.8);
     border: 1px solid var(--line); font-size: 14px; color: var(--ink-2); margin-bottom: 26px; }
   .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
-  a.pill { text-decoration: none; transition: border-color 0.15s ease; }
-  a.pill:hover { border-color: #cfd1d4; color: var(--ink); }
   .hero h1 { max-width: 14em; margin-inline: auto; }
   .hero .sub { margin: 22px auto 0; }
   .ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 34px; }
   .small { margin-top: 18px; font-size: 14px; color: var(--muted); }
   .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 10px; }
   .meta span + span::before { content: "·"; margin-right: 10px; }
-  .modes { display: inline-flex; gap: 2px; padding: 3px; margin-top: clamp(40px, 5.5vw, 56px); border-radius: 999px; background: rgba(255, 255, 255, 0.75); border: 1px solid var(--line); }
-  .modes button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding-inline: 12px 14px; border: 0; border-radius: 999px; background: transparent;
-    font: 500 13px/1 var(--sans); color: var(--muted); cursor: pointer; }
-  .modes button[aria-pressed="true"] { background: var(--ink); color: #fff; }
-  .modes button:not([aria-pressed="true"]):hover { color: var(--ink); }
-  /* the app as it looks: a real screenshot, with the window controls it has on your Mac */
-  .window { position: relative; container-type: inline-size; margin: 18px auto 0; max-width: 1040px; border-radius: 14px 14px 0 0; overflow: hidden; background: #f3f4f3;
-    box-shadow: 0 30px 80px -32px rgba(16, 24, 20, 0.42); border: 1px solid rgba(0, 0, 0, 0.09); border-bottom: 0; }
-  .window.is-dark { background: #0a0a0b; border-color: rgba(0, 0, 0, 0.5); }
-  .window img { width: 100%; height: auto; aspect-ratio: 2400 / 1340; object-fit: cover; object-position: top; }
-  .lights { position: absolute; left: 1.45cqw; top: 1.45cqw; display: flex; gap: 0.62cqw; }
-  .lights i { width: 1.02cqw; height: 1.02cqw; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12); }
-  .lights i:nth-child(2) { background: #febc2e; }
-  .lights i:nth-child(3) { background: #28c840; }
-
-  /* the app */
-  .kicker { display: inline-block; font: 500 13px/1 var(--mono); color: var(--green); }
-  .shot2 { margin: 0 auto; max-width: 980px; border-radius: 24px; background: var(--soft); padding: clamp(12px, 2.6vw, 28px); }
-  .shot2 img { width: 100%; height: auto; border-radius: 14px; box-shadow: 0 18px 40px -26px rgba(16, 24, 20, 0.45); }
-  .features { max-width: 980px; margin: clamp(32px, 4.5vw, 48px) auto 0; }
+  .window { margin: clamp(44px, 6vw, 64px) auto 0; max-width: 1040px; border-radius: 16px 16px 0 0; overflow: hidden; background: #0e0f11;
+    box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04), 0 30px 80px -30px rgba(16, 24, 20, 0.45); border: 1px solid rgba(0, 0, 0, 0.08); border-bottom: 0; }
+  .window .bar { height: 38px; display: flex; align-items: center; gap: 7px; padding-inline: 14px; background: #16171a; }
+  .window .bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a3b40; }
+  .window img { width: 100%; height: auto; aspect-ratio: 2360 / 1300; object-fit: cover; object-position: top; }
 
   /* how it helps */
   .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
@@ -214,13 +196,11 @@
     .ctas .btn { height: 50px; font-size: 16px; }
     .meta { flex-direction: column; align-items: center; }
     .meta span + span::before { content: none; }
-    /* the app shot: zoom into the headline so it stays readable */
-    .modes { margin-top: 32px; }
-    .window { height: 300px; border-radius: 14px 14px 0 0; }
-    .window img { width: 232%; max-width: none; aspect-ratio: auto; height: auto; transform: translateX(-22%); }
-    .lights { display: none; }
-    .shot2 { border-radius: 20px; padding: 12px; }
-    .shot2 img { border-radius: 10px; }
+    /* the app shot: zoom into the first item so it stays readable */
+    .window { margin-top: 36px; height: 330px; border-radius: 14px 14px 0 0; }
+    .window .bar { height: 30px; }
+    .window .bar i { width: 9px; height: 9px; }
+    .window img { width: 250%; max-width: none; aspect-ratio: auto; height: auto; transform: translateX(-23%); }
     .step { grid-template-columns: 1fr; grid-template-rows: none; }
     .step .stage { grid-row: auto; height: 190px; }
     .step .num { margin-top: 2px; }
@@ -261,7 +241,6 @@
       Bastion
     </a>
     <nav class="links" aria-label="Sections">
-      <a href="#app">The app</a>
       <a href="#how">How it helps</a>
       <a href="#developers">Developers</a>
       <a href="https://github.com/realanshuman/bastion">GitHub</a>
@@ -275,9 +254,9 @@
 <main id="top">
   <section class="hero">
     <div class="wrap glow">
-      <a class="pill" href="#app"><i aria-hidden="true"></i>New: Bastion 5, with a redesigned app</a>
+      <span class="pill"><i aria-hidden="true"></i>Free and open source · for macOS</span>
       <h1>The security agent that keeps malware out of your code</h1>
-      <p class="sub">Bastion watches your projects, stops hidden malware before it runs, and tells you in plain words what to do next.</p>
+      <p class="sub">Bastion watches your projects, stops hidden malware before it runs, and helps you fix it in one click.</p>
       <div class="ctas">
         <a class="btn dark" href="https://github.com/realanshuman/bastion/releases/latest">
           <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.8-3-.8-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.5 1.3-2.6 0 0-2.5-1-2.5-3.8zM14.1 5.8c.6-.8 1.1-1.8 1-2.8-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.7-1 2.7 1 .1 2-.5 2.7-1.3z"/></svg>
@@ -285,34 +264,10 @@
         </a>
         <a class="btn" href="#developers">For developers</a>
       </div>
-      <p class="small meta"><span>Free and open source</span><span>Works with npm, pnpm, yarn and bun</span><span>macOS 14 or later</span></p>
-      <div class="modes" role="group" aria-label="Show the app in">
-        <button type="button" data-mode="light" aria-pressed="true"><svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Light</button>
-        <button type="button" data-mode="dark" aria-pressed="false"><svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Dark</button>
-      </div>
+      <p class="small meta"><span>Works with npm, pnpm, yarn and bun</span><span>macOS 14 or later</span></p>
       <div class="window">
-        <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-        <img class="shot" data-mode="light" src="assets/app-light.jpg" width="2400" height="1600" alt="Bastion's Home in light mode. The headline says 2 old branches carry hidden malware and nothing is running. Below it: what needs you with one-click fixes, recent activity and protection.">
-        <img class="shot" data-mode="dark" src="assets/app-dark.jpg" width="2400" height="1600" loading="lazy" hidden alt="The same Home screen in dark mode.">
-      </div>
-    </div>
-  </section>
-
-  <section id="app">
-    <div class="wrap">
-      <div class="head center">
-        <span class="kicker">New in Bastion 5</span>
-        <h2>Everything that matters, at a glance</h2>
-        <p class="sub">The app opens on one plain sentence about your code. What needs you comes first, with the proof and the fix.</p>
-      </div>
-      <figure class="shot2">
-        <img src="assets/app-needs.jpg" width="1720" height="676" loading="lazy" alt="One item from Needs you: Delete the old branch promo. Dormant, not running. An old copy of postcss.config.mjs with hidden malware is on the branch promo. The proof shows line 1 and column 2,032, next to a Delete branch button.">
-      </figure>
-      <div class="trust features">
-        <div><h3>One sentence</h3><p>Home tells you where you stand, in plain words.</p></div>
-        <div><h3>Proof and a fix</h3><p>Every problem shows the exact line, and the fix that fits it.</p></div>
-        <div><h3>Every repository</h3><p>Health, branch and push guard, one card each.</p></div>
-        <div><h3>Light or dark</h3><p>Or match your Mac. Press ⌘K to jump anywhere.</p></div>
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <img src="assets/needs-you.jpg" width="2360" height="1520" alt="The Bastion app showing what needs you: in the storefront project, Commit the fix on main and Push the fix to origin/main, each with proof of where the hidden code is and a fix button.">
       </div>
     </div>
   </section>
@@ -465,19 +420,5 @@
     <div class="wordmark" aria-hidden="true">Bastion</div>
   </div>
 </footer>
-<script>
-  // Light or dark: show the matching screenshot
-  (function () {
-    var win = document.querySelector(".window");
-    document.querySelectorAll(".modes button").forEach(function (b) {
-      b.addEventListener("click", function () {
-        var mode = b.getAttribute("data-mode");
-        document.querySelectorAll(".modes button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
-        document.querySelectorAll(".window .shot").forEach(function (img) { img.hidden = img.getAttribute("data-mode") !== mode; });
-        win.classList.toggle("is-dark", mode === "dark");
-      });
-    });
-  })();
-</script>
 </body>
 </html>
