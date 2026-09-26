@@ -318,6 +318,10 @@ do {
     case "enable", "disable":
         guard let name = rest.first, let f = Feature(name) else { throw Failure("Usage: bastion \(command) watcher|schedule|exec-guard|git-guard|auto-respond") }
         if command == "disable" { try confirmWeakening("Turn off the \(f.title)?") }
+        if command == "enable", f == .gitGuard, argv.contains("--husky") {   // bastion enable git-guard --husky <repo>
+            let r = try guardHusky(rest.count > 1 ? rest[1] : ".")
+            output(r) { print(good("✓ ") + (r["message"] as? String ?? "")) }
+        }
         let r = try (command == "enable" ? enable(f) : disable(f))
         output(r) { print(((r["enabled"] as? Bool ?? false) == (command == "enable") ? good("✓ ") : warn("! ")) + (r["message"] as? String ?? "")) }
 
@@ -325,7 +329,8 @@ do {
         if !wantJSON && !argv.contains("--quiet") {
             FileHandle.standardError.write(Data(faint("investigating — scan, git history, processes, network…\n").utf8))
         }
-        let r = try respond(paths: rest, planOnly: argv.contains("--plan"), trigger: trigger, wait: trigger == "manual" || trigger == "agent", fromLog: fromLog)
+        let r = try respond(paths: rest, planOnly: argv.contains("--plan"), trigger: trigger, wait: trigger == "manual" || trigger == "agent",
+                            fromLog: fromLog, forceContain: argv.contains("--contain") && trigger == "manual")
         let code: Int32 = (r["status"] as? String) == "open" ? 2 : 0
         if argv.contains("--quiet") { exit(code) }
         output(r, code: code) { humanIncident(r) }
@@ -356,9 +361,16 @@ do {
             let r = try resolveIncident(rest.count > 1 ? rest[1] : "latest")
             output(r) { print(good("✓ resolved ") + (r["id"] as? String ?? "")) }
         }
+        if rest.count >= 3, rest[1] == "tick" {   // bastion incident <id> tick <to-do key>
+            let r = try tickTodo(rest[0], rest[2])
+            output(["id": r["id"] ?? "", "open_todos": r["open_todos"] ?? 0, "all_done": r["all_done"] ?? false]) { print(good("✓ done")) }
+        }
         let id = rest.first ?? "latest"
-        guard let inc = findIncident(id) else { throw Failure(id == "latest" ? "No incidents yet." : "No incident \(id). List them with `bastion incidents`.") }
+        guard let found = findIncident(id) else { throw Failure(id == "latest" ? "No incidents yet." : "No incident \(id). List them with `bastion incidents`.") }
+        let inc = refreshIncident(found)
         var full = inc
+        let branches = (inc["repos"] as? [[String: Any]] ?? []).flatMap { r in (r["branches"] as? [[String: Any]] ?? []).map { var b = $0; b["path"] = r["path"]; return b } }
+        if !branches.isEmpty { full["branch_details"] = branchContexts(branches) }
         full["report"] = engine("incidents/\(inc["id"] as? String ?? "")/report.md")
         output(full) { print(reportMarkdown(inc)) }
 
@@ -476,8 +488,58 @@ do {
         output(["osv": osvEnabled()]) { print("online malware check (osv.dev): " + (osvEnabled() ? good("on") : faint("off"))) }
 
     case "connect":
-        let c = connectInfo()
+        if let agent = rest.first, argv.contains("--write") {
+            let r = try connectAgent(agent)
+            output(r) { print(good("✓ ") + (r["message"] as? String ?? "")) }
+        }
+        var c = connectInfo()
+        c["agents"] = agentsReport()
         output(c) { humanConnect(c) }
+
+    case "agents":
+        let list = agentsReport()
+        output(["agents": list]) {
+            for a in list where a["installed"] as? Bool == true {
+                let hg = (a["hard_guard"] as? Bool).map { $0 ? good(" · hard-guarded") : faint(" · not hard-guarded") } ?? ""
+                print((a["connected"] as? Bool == true ? good("✓ ") : warn("○ ")) + strong(a["name"] as? String ?? "") +
+                      (a["connected"] as? Bool == true ? " connected" : faint(" not connected")) + hg)
+            }
+        }
+
+    case "todos":
+        let r = todosReport(network: !argv.contains("--offline"))
+        let items = r["items"] as? [[String: Any]] ?? []
+        output(r, code: items.isEmpty ? 0 : 2) {
+            print(items.isEmpty ? good("✓ all clear — nothing needs you") : strong(r["summary"] as? String ?? ""))
+            for i in items {
+                let d = i["danger"] as? String ?? ""
+                let mark = d == "now" ? bad("● act now") : d == "dormant" ? warn("● dormant") : d == "leftover" ? faint("● leftover") : faint("● check")
+                print("\n\(mark)  " + strong(i["title"] as? String ?? "") + faint("   [\(i["id"] ?? "")]"))
+                if let n = i["repo_name"] as? String { print(faint("  \(n) · \(i["where"] ?? "")")) }
+                print("  " + (i["what"] as? String ?? ""))
+                for p in i["proof"] as? [[String: Any]] ?? [] { print(faint("  proof: ") + "\(p["file"] ?? ""): \(p["text"] ?? "")") }
+                let fix = i["fix"] as? [String: Any] ?? [:]
+                for c in fix["commands"] as? [String] ?? [] { print("    " + c) }
+                if fix["runnable"] as? Bool == true { print(faint("  one step: bastion fix \(i["id"] ?? "")") + (fix["risk"] as? String != "safe" ? faint(" --yes") : "")) }
+            }
+        }
+
+    case "fix":
+        guard let id = rest.first else { throw Failure("Which one? `bastion todos` lists them with their ids.") }
+        let r = try runFix(id, yes: assumeYes)
+        output(r, code: r["ok"] as? Bool == true ? 0 : 1) {
+            print(r["output"] as? String ?? "")
+            print((r["ok"] as? Bool == true ? good("✓ ") : bad("✗ ")) + (r["message"] as? String ?? ""))
+        }
+
+    case "next":
+        let steps = nextSteps()
+        output(["steps": steps, "done": steps.filter { $0["done"] as? Bool == true }.count, "total": steps.count]) {
+            for s in steps {
+                print((s["done"] as? Bool == true ? good("✓ ") : warn("○ ")) + (s["title"] as? String ?? "") + (s["optional"] as? Bool == true ? faint("  (optional)") : ""))
+                if s["done"] as? Bool != true, let a = s["action"] as? [String] { print(faint("    bastion " + a.joined(separator: " "))) }
+            }
+        }
 
     case "selftest":
         let r = selfTest()

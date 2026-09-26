@@ -84,7 +84,7 @@ func humanizeEvent(_ message: String) -> String {
     }
     if let r = s.range(of: #"^INCIDENT \S+ \[\w+\]: "#, options: .regularExpression) { s = String(s[r.upperBound...]) }
     else if s.hasPrefix("INCIDENT ") { s = String(s.dropFirst(9)).replacingOccurrences(of: ": ", with: " ", options: [], range: nil) }
-    for (pattern, template) in [(#"^CHANGED: "#, ""), (#"^ALERT: "#, ""), (#"^QUARANTINED \[([^\]]+)\]: "#, "Quarantined ($1): "),
+    for (pattern, template) in [(#"^CHANGED: "#, ""), (#"^ALERT: "#, ""), (#"^FIXED: "#, "Fixed: "), (#"^FIX FAILED: "#, "Fix didn't work: "), (#"^QUARANTINED \[([^\]]+)\]: "#, "Quarantined ($1): "),
                                 (#"^BLOCKED \[([^\]]+)\]: "#, "Blocked $1: "), (#"^KILLED "#, "Killed ")] {
         s = s.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
     }
@@ -132,7 +132,9 @@ final class Router: ObservableObject {
     @Published var pane: Pane = .overview
     @Published var incident: String?          // an open incident page (Incidents › INC-…)
     @Published var palette = false
+    @Published var incidentsTab = "needs"      // "needs" (Needs you) · "all" (every incident)
     func go(_ p: Pane) { pane = p; incident = nil; palette = false }
+    func openNeedsYou() { pane = .incidents; incident = nil; incidentsTab = "needs"; palette = false }
     func open(incident id: String) { pane = .incidents; incident = id; palette = false }
 }
 
@@ -167,13 +169,20 @@ final class AppStore: ObservableObject {
     @Published var loaded = false
     @Published var hooks: JSON = [:]
     @Published var sheet: ResultSheetContent?
+    @Published var todos: [JSON] = []          // everything that needs the user, live (bastion todos)
+    @Published var steps: [JSON] = []          // setup still open (bastion next)
+    @Published var agents: [JSON] = []         // which AI agents are connected (bastion agents)
 
     func refresh() {
         Task {
             let r = await Task.detached(priority: .userInitiated) { () -> [Box] in
-                bastionAll([["status"], ["incidents"], ["repos"], ["activity", "-n", "300"], ["quarantine"], ["lists"], ["connect"], ["hooks", "status"]])
+                bastionAll([["status"], ["incidents"], ["repos"], ["activity", "-n", "300"], ["quarantine"], ["lists"], ["connect"], ["hooks", "status"],
+                            ["todos"], ["next"], ["agents"]])
             }.value
             hooks = r[7].json
+            todos = r[8].json["items"] as? [JSON] ?? []
+            steps = r[9].json["steps"] as? [JSON] ?? []
+            agents = r[10].json["agents"] as? [JSON] ?? []
             status = r[0].json
             incidents = r[1].json["incidents"] as? [JSON] ?? []
             repos = r[2].json["repos"] as? [JSON] ?? []
@@ -269,6 +278,72 @@ final class AppStore: ObservableObject {
 
     func ask(_ title: String, _ message: String, button: String, _ run: @escaping () -> Void) {
         confirm = Confirm(title: title, message: message, button: button, run: run)
+    }
+
+    /// act_now · clean_up · all_clear — one answer, shown the same way everywhere
+    var state: String { status["state"] as? String ?? (protected ? "all_clear" : "act_now") }
+    var needsYouCount: Int { loaded ? todos.count : (status["needs_you"] as? Int ?? 0) }
+
+    /// Runs an item's fix — the same commands it shows. Anything that reaches GitHub or deletes something asks first.
+    func fix(_ item: JSON) {
+        guard let id = item["id"] as? String, let fix = item["fix"] as? JSON else { return }
+        let risk = fix["risk"] as? String ?? "safe"
+        let title = fix["title"] as? String ?? "Fix"
+        let cmds = (fix["commands"] as? [String] ?? []).joined(separator: "\n")
+        let go = {
+            self.busy.insert("fix:" + id)
+            Task {
+                let r = await Task.detached(priority: .userInitiated) { Box(json: bastion(["fix", id] + (risk == "safe" ? [] : ["--yes"]))) }.value.json
+                self.busy.remove("fix:" + id)
+                self.flash((r["error"] as? String) ?? (r["message"] as? String) ?? "Done.")
+                if r["ok"] as? Bool != true, let out = r["output"] as? String, !out.isEmpty {
+                    self.sheet = ResultSheetContent(title: title, json: ["summary": r["message"] ?? "It didn't work.", "output": out])
+                }
+                self.refresh()
+                for incident in self.details.keys { self.load(incident: incident) }
+            }
+        }
+        switch risk {
+        case "safe": go()
+        case "rewrites-history":
+            ask("\(title)?", "This replaces the branch on GitHub with your clean copy. It only goes through if GitHub still has the infected commit. Anyone who already pulled that commit will need to reset their copy.\n\n\(cmds)", button: "Push clean copy", go)
+        case "deletes-branch":
+            ask("\(title)?", "This deletes the branch. Bastion can't bring it back.\n\n\(cmds)", button: "Delete branch", go)
+        default:
+            ask("\(title)?", cmds, button: "Run", go)
+        }
+    }
+
+    /// Completes a setup step (turn a protection on, add a hook, connect an agent). Steps that change shared files ask first.
+    func doStep(_ step: JSON) {
+        guard let action = step["action"] as? [String] else {
+            if step["page"] as? String == "agents" { Router.shared.go(.agents) }
+            return
+        }
+        let id = step["id"] as? String ?? ""
+        let go = { self.run("step:" + id, action) }
+        if let c = step["confirm"] as? String { ask("\(step["title"] as? String ?? "Continue")?", c, button: "Continue", go) } else { go() }
+    }
+
+    /// Every recommended step that needs no extra decision, one after another.
+    func doRecommended() {
+        let todo = steps.filter { $0["done"] as? Bool != true && $0["bulk"] as? Bool == true }
+        guard !todo.isEmpty else { return }
+        busy.insert("steps")
+        Task {
+            for s in todo {
+                let a = s["action"] as? [String] ?? []
+                _ = await Task.detached(priority: .userInitiated) { Box(json: bastion(a)) }.value
+            }
+            busy.remove("steps")
+            flash("Turned on \(todo.count) protection\(todo.count == 1 ? "" : "s").")
+            refresh()
+        }
+    }
+
+    /// The user says a to-do Bastion can't check (rotating secrets…) is done.
+    func tick(_ incident: String, _ key: String) {
+        run("tick:" + key, ["incident", incident, "tick", key], done: "Marked done.") { _ in self.load(incident: incident) }
     }
 
     var protection: JSON { status["protection"] as? JSON ?? [:] }
@@ -604,14 +679,14 @@ struct Sidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 8) {
-                BrandMark(size: 20, tint: store.protected ? DT.green : DT.orange)
+                BrandMark(size: 20, tint: stateLook(store).tint)
                 Text("Bastion").font(uiFont(13.5, .semibold)).foregroundStyle(DT.text)
                 Spacer()
                 IconButton(icon: "magnifyingglass", help: "Search and commands  ⌘K") { withAnimation(.easeOut(duration: 0.12)) { router.palette = true } }
                 IconButton(icon: "arrow.clockwise", help: "Refresh") { store.refresh() }
             }.padding(.leading, 8).padding(.top, 38).padding(.bottom, 12)
             item(.overview)
-            item(.incidents, count: store.openIncidents)
+            item(.incidents, count: store.needsYouCount)
             header("Protection")
             item(.repos)
             item(.activity)
@@ -621,8 +696,9 @@ struct Sidebar: View {
             item(.settings)
             Spacer()
             HStack(spacing: 8) {
-                Circle().fill(store.protected ? DT.green : DT.orange).frame(width: 7, height: 7)
-                Text(store.protected ? "Protected" : "At risk").font(uiFont(12, .medium)).foregroundStyle(DT.dim)
+                let look = stateLook(store)
+                Circle().fill(look.tint).frame(width: 7, height: 7)
+                Text(look.short).font(uiFont(12, .medium)).foregroundStyle(DT.dim)
                 Spacer()
                 Text("v\(store.status["version"] as? String ?? "")").font(uiFont(11)).foregroundStyle(DT.faint)
             }.padding(.horizontal, 10).padding(.bottom, 14)
@@ -666,6 +742,7 @@ struct OverviewPage: View {
                 hero
                 if let inc = store.status["incident"] as? JSON { incidentRow(inc) }
                 stats
+                if store.steps.contains(where: { $0["done"] as? Bool != true && $0["optional"] as? Bool != true }) { NextStepsGroup(store: store) }
                 VStack(alignment: .leading, spacing: 10) {
                     SectionLabel(text: "Protection")
                     ProtectionGroup(store: store)
@@ -690,16 +767,21 @@ struct OverviewPage: View {
     }
 
     private var hero: some View {
-        let threats = store.status["active_threats"] as? [JSON] ?? []
+        let look = stateLook(store)
         let last = store.status["last_scan"] as? JSON
         let g = store.status["git_guard"] as? JSON ?? [:]
+        let setup = store.status["setup"] as? JSON ?? [:]
+        let done = setup["done"] as? Int ?? 0, total = setup["total"] as? Int ?? 0
         return HStack(spacing: 16) {
-            BrandMark(size: 48, tint: threats.isEmpty ? DT.green : DT.orange).shadow(color: (threats.isEmpty ? DT.green : DT.orange).opacity(0.3), radius: 10, y: 3)
+            BrandMark(size: 48, tint: look.tint).shadow(color: look.tint.opacity(0.3), radius: 10, y: 3)
             VStack(alignment: .leading, spacing: 4) {
-                Text(threats.isEmpty ? "You're protected" : "\(threats.count) active threat\(threats.count == 1 ? "" : "s")")
-                    .font(uiFont(22, .semibold)).foregroundStyle(DT.text)
-                Text("Watching \(g["repos"] as? Int ?? store.repos.count) repositories · last scan \(shortTime(last?["time"]).lowercased())\((last?["clean"] as? Bool) == true ? " · clean" : "")")
+                Text(look.title).font(uiFont(22, .semibold)).foregroundStyle(DT.text)
+                Text("\(look.detail) Watching \(g["repos"] as? Int ?? store.repos.count) repositories · last scan \(shortTime(last?["time"]).lowercased())")
                     .font(uiFont(13)).foregroundStyle(DT.dim)
+                if total > 0 && done < total {
+                    Text("Setup: \(done) of \(total) steps done — see Next steps below")
+                        .font(uiFont(12.5, .medium)).foregroundStyle(DT.orange)
+                }
                 if store.status["responding"] as? Bool == true || store.busy.contains("scan") {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12)
@@ -707,11 +789,16 @@ struct OverviewPage: View {
                     }
                 }
             }
+            Spacer(minLength: 12)
+            if store.needsYouCount > 0 {
+                Button { Router.shared.openNeedsYou() } label: { Label("Review", systemImage: "arrow.right") }
+                    .buttonStyle(PrimaryButton(tint: store.state == "act_now" ? DT.red : DT.accent))
+            }
         }
     }
 
     private func incidentRow(_ inc: JSON) -> some View {
-        let status = inc["status"] as? String ?? "open"
+        let status = (inc["todos"] as? Int ?? 0) > 0 && inc["status"] as? String != "resolved" ? "open" : inc["status"] as? String ?? "open"
         return Button { if let id = inc["id"] as? String { Router.shared.open(incident: id) } } label: {
             HStack(spacing: 12) {
                 StatusIcon(status: status, size: 16)
@@ -734,7 +821,7 @@ struct OverviewPage: View {
         let cells: [(String, String, Color)] = [
             ("Repositories", "\(g["repos"] as? Int ?? store.repos.count)", DT.text),
             ("Push-guarded", "\(g["protected"] as? Int ?? 0)", DT.text),
-            ("Open incidents", "\(store.openIncidents)", store.openIncidents > 0 ? DT.orange : DT.text),
+            ("Needs you", "\(store.needsYouCount)", store.needsYouCount > 0 ? (store.state == "act_now" ? DT.red : DT.orange) : DT.text),
             ("Quarantined", "\(store.status["quarantine_count"] as? Int ?? 0)", DT.text),
         ]
         return HStack(spacing: 0) {
@@ -825,6 +912,7 @@ struct ActivityRow: View {
             case "blocked": return ("hand.raised.fill", DT.orange)
             case "alert": return ("exclamationmark.triangle.fill", DT.orange)
             case "setting_changed": return ("slider.horizontal.3", DT.blue)
+            case "fixed": return ("checkmark.circle.fill", DT.green)
             case "scan": return (event["attention"] as? Int ?? 0 > 0 ? "magnifyingglass.circle.fill" : "checkmark.circle.fill", event["attention"] as? Int ?? 0 > 0 ? DT.orange : DT.green)
             default: return (raw.hasPrefix("INCIDENT") ? "exclamationmark.shield.fill" : "circle.fill", raw.hasPrefix("INCIDENT") ? DT.accent : DT.faint)
             }
@@ -843,43 +931,197 @@ struct ActivityRow: View {
 
 struct IncidentsPage: View {
     @ObservedObject var store: AppStore
-    @State private var filter = "all"
-    private let groups: [(String, String)] = [("open", "Needs you"), ("contained", "Contained"), ("resolved", "Resolved")]
+    @ObservedObject private var router = Router.shared
     var body: some View {
         VStack(spacing: 0) {
             TopBar(crumbs: ["Incidents"]) {
-                Button { store.respond() } label: { Label(store.busy.contains("respond") ? "Investigating…" : "Respond", systemImage: "bolt.shield") }
-                    .buttonStyle(SecondaryButton()).disabled(store.busy.contains("respond"))
+                Button { store.scan() } label: { Label(store.busy.contains("scan") ? "Scanning…" : "Scan now", systemImage: "magnifyingglass") }
+                    .buttonStyle(SecondaryButton()).disabled(store.busy.contains("scan"))
             }
             HStack(spacing: 4) {
-                ForEach([("all", "All incidents"), ("open", "Needs you"), ("contained", "Contained"), ("resolved", "Resolved")], id: \.0) { f in
-                    Button { filter = f.0 } label: {
-                        Text(f.1).font(uiFont(12.5, .medium)).foregroundStyle(filter == f.0 ? DT.text : DT.dim)
-                            .padding(.horizontal, 10).frame(height: 26)
-                            .background(filter == f.0 ? DT.surface2 : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(filter == f.0 ? DT.border : .clear))
-                    }.buttonStyle(.plain)
-                }
+                tab("needs", "Needs you", store.needsYouCount)
+                tab("all", "All incidents", store.incidents.count)
                 Spacer()
             }.padding(.horizontal, 12).frame(height: 44)
             Hairline()
-            if store.incidents.isEmpty {
-                EmptyState(icon: "checkmark.shield", title: "No incidents", text: "When Bastion finds something it investigates, contains what it can prove and opens an incident here with a report and your to-dos.")
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        ForEach(groups, id: \.0) { g in
-                            let rows = store.incidents.filter { ($0["status"] as? String ?? "open") == g.0 }
-                            if !rows.isEmpty && (filter == "all" || filter == g.0) {
-                                Section {
-                                    ForEach(Array(rows.enumerated()), id: \.offset) { _, inc in IncidentRow(inc: inc) }
-                                } header: { GroupHeader(status: g.0, title: g.1, count: rows.count) }
-                            }
-                        }
+            if router.incidentsTab == "needs" { NeedsYouList(store: store) } else { IncidentList(store: store) }
+        }
+    }
+    private func tab(_ id: String, _ title: String, _ count: Int) -> some View {
+        let on = router.incidentsTab == id
+        return Button { router.incidentsTab = id } label: {
+            HStack(spacing: 6) {
+                Text(title).font(uiFont(12.5, .medium)).foregroundStyle(on ? DT.text : DT.dim)
+                if count > 0 { Text("\(count)").font(uiFont(11.5, .medium)).foregroundStyle(DT.dim) }
+            }
+            .padding(.horizontal, 10).frame(height: 26)
+            .background(on ? DT.surface2 : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(on ? DT.border : .clear))
+        }.buttonStyle(.plain)
+    }
+}
+
+/// Every incident, grouped: still needs you (open to-dos) · contained · resolved
+struct IncidentList: View {
+    @ObservedObject var store: AppStore
+    var body: some View {
+        let needs = store.incidents.filter { ($0["status"] as? String) != "resolved" && (($0["todos"] as? Int ?? 0) > 0 || ($0["status"] as? String) == "open") }
+        let contained = store.incidents.filter { ($0["status"] as? String) == "contained" && ($0["todos"] as? Int ?? 0) == 0 }
+        let resolved = store.incidents.filter { ($0["status"] as? String) == "resolved" }
+        let groups: [(String, String, [JSON])] = [("open", "Needs you", needs), ("contained", "Contained", contained), ("resolved", "Resolved", resolved)].filter { !$0.2.isEmpty }
+        if store.incidents.isEmpty {
+            EmptyState(icon: "checkmark.shield", title: "No incidents", text: "When Bastion finds something it investigates, contains what it can prove and opens an incident here with a report and your to-dos.")
+        } else {
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(groups, id: \.0) { g in
+                        GroupHeader(status: g.0, title: g.1, count: g.2.count)
+                        ForEach(g.2.indices, id: \.self) { i in IncidentRow(inc: g.2[i]) }
                     }
                 }
             }
         }
+    }
+}
+
+/// The live list: everything that needs the user, grouped by repo, each with what it is, how dangerous it is now, proof and the fix
+struct NeedsYouList: View {
+    @ObservedObject var store: AppStore
+    var body: some View {
+        if store.todos.isEmpty {
+            VStack(spacing: 14) {
+                EmptyState(icon: "checkmark.shield", title: "Nothing needs you",
+                           text: "Bastion checks this again every time it refreshes. When it finds something, it shows up here with what it is, how dangerous it is right now and how to fix it.")
+                    .frame(maxHeight: 260)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    Text(store.state == "act_now" ? "Act on the red items first — they're running, or will run as soon as npm runs in that folder."
+                                                  : "Nothing here is running. Clean these up so nobody runs them by accident.")
+                        .font(uiFont(13)).foregroundStyle(DT.dim)
+                    ForEach(groups, id: \.0) { g in
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 8) {
+                                Image(systemName: g.0.isEmpty ? "desktopcomputer" : "folder.fill").font(.system(size: 12)).foregroundStyle(DT.blue.opacity(0.85))
+                                Text(g.0.isEmpty ? "This Mac" : (g.0 as NSString).lastPathComponent).font(uiFont(13.5, .semibold)).foregroundStyle(DT.text)
+                                if !g.0.isEmpty { Text(tildePath(g.0)).font(codeFont(11)).foregroundStyle(DT.faint) }
+                                Spacer()
+                            }
+                            ForEach(g.1.indices, id: \.self) { i in TodoCard(store: store, item: g.1[i]) }
+                        }
+                    }
+                }
+                .padding(.horizontal, 32).padding(.vertical, 24).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
+            }
+        }
+    }
+    private var groups: [(String, [JSON])] {
+        var out: [(String, [JSON])] = []
+        for item in store.todos {
+            let repo = item["repo"] as? String ?? ""
+            if let i = out.firstIndex(where: { $0.0 == repo }) { out[i].1.append(item) } else { out.append((repo, [item])) }
+        }
+        return out
+    }
+}
+
+struct DangerPill: View {
+    let danger: String
+    var body: some View {
+        let (text, tint): (String, Color) = {
+            switch danger {
+            case "now": return ("Act now", DT.red)
+            case "dormant": return ("Dormant — not running", DT.orange)
+            case "leftover": return ("Leftover", DT.faint)
+            default: return ("To check", DT.blue)
+            }
+        }()
+        return Text(text).font(uiFont(11, .semibold)).foregroundStyle(tint)
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(tint.opacity(0.14), in: Capsule())
+    }
+}
+
+struct TodoCard: View {
+    @ObservedObject var store: AppStore
+    let item: JSON
+    var body: some View {
+        let fix = item["fix"] as? JSON ?? [:]
+        let danger = item["danger"] as? String ?? ""
+        let id = item["id"] as? String ?? ""
+        let proofs = item["proof"] as? [JSON] ?? []
+        let cmds = fix["commands"] as? [String] ?? []
+        let busy = store.busy.contains("fix:" + id)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                DangerPill(danger: danger)
+                Text(item["title"] as? String ?? "").font(uiFont(14, .semibold)).foregroundStyle(DT.text).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if let inc = item["incident"] as? String {
+                    Button { Router.shared.open(incident: inc) } label: { Text(inc).font(codeFont(11)).foregroundStyle(DT.dim) }.buttonStyle(.plain).help("Open the incident")
+                }
+            }
+            if let what = item["what"] as? String, !what.isEmpty {
+                Text(what).font(uiFont(13)).foregroundStyle(DT.text.opacity(0.88)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            if let place = item["where"] as? String, !place.isEmpty, item["type"] as? String != "todo" {
+                Text(place).font(codeFont(11.5)).foregroundStyle(DT.dim).textSelection(.enabled)
+            }
+            if !proofs.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Proof — where the hidden code is").font(uiFont(12, .medium)).foregroundStyle(DT.dim)
+                    ForEach(proofs.indices, id: \.self) { i in
+                        let p = proofs[i]
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("\(p["file"] as? String ?? ""): \(p["text"] as? String ?? "")").font(codeFont(11.5)).foregroundStyle(DT.text.opacity(0.85))
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            HStack(spacing: 8) {
+                                if let link = p["github_url"] as? String, let url = URL(string: link) {
+                                    Button { NSWorkspace.shared.open(url) } label: { Label("See it on GitHub", systemImage: "arrow.up.right.square") }.buttonStyle(SecondaryButton())
+                                }
+                                if let see = p["see_it"] as? String {
+                                    Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(see, forType: .string); store.flash("Copied — paste it in a terminal to see the hidden code.") } label: {
+                                        Label("Copy command to see it", systemImage: "doc.on.doc")
+                                    }.buttonStyle(SecondaryButton())
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(DT.bg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
+            }
+            if item["type"] as? String != "todo" {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let why = fix["why"] as? String, !why.isEmpty {
+                        (Text("Fix: ").font(uiFont(12.5, .semibold)).foregroundColor(DT.text) + Text(why).font(uiFont(12.5)).foregroundColor(DT.dim))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !cmds.isEmpty && !(cmds.count == 1 && cmds[0].hasPrefix("bastion ")) { CommandBlock(text: cmds.joined(separator: "\n")) }
+                }
+            } else if !cmds.isEmpty {
+                CommandBlock(text: cmds.joined(separator: "\n"))
+            }
+            HStack(spacing: 8) {
+                if fix["runnable"] as? Bool == true {
+                    Button { store.fix(item) } label: {
+                        HStack(spacing: 6) {
+                            if busy { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12) }
+                            Text(busy ? "Working…" : fix["button"] as? String ?? "Fix it")
+                        }
+                    }.buttonStyle(PrimaryButton(tint: danger == "now" ? DT.red : DT.accent)).disabled(busy)
+                }
+                if item["type"] as? String == "todo", let inc = item["incident"] as? String, let key = item["todo_key"] as? String {
+                    Button { store.tick(inc, key) } label: { Label("Mark done", systemImage: "checkmark") }.buttonStyle(SecondaryButton())
+                }
+                Spacer()
+            }
+        }
+        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        .background(DT.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(danger == "now" ? DT.red.opacity(0.5) : danger == "dormant" ? DT.orange.opacity(0.35) : DT.border))
     }
 }
 
@@ -912,7 +1154,7 @@ struct IncidentPage: View {
             }
             if let inc, inc["error"] == nil {
                 HStack(alignment: .top, spacing: 0) {
-                    IncidentMain(inc: inc)
+                    IncidentMain(store: store, inc: inc)
                     Rectangle().fill(DT.hairline).frame(width: 1)
                     IncidentProperties(inc: inc).frame(width: 280)
                 }
@@ -938,14 +1180,20 @@ struct IncidentPage: View {
             }
             IconButton(icon: "doc.text", help: "Open the Markdown report") { NSWorkspace.shared.open(URL(fileURLWithPath: inc["report"] as? String ?? "")) }
             if status != "resolved" {
-                Button { store.run("resolve", ["incident", "resolve", id], done: "\(id) marked resolved.") } label: { Label("Mark resolved", systemImage: "checkmark") }
-                    .buttonStyle(PrimaryButton())
+                if inc["all_done"] as? Bool == true {
+                    Button { store.run("resolve", ["incident", "resolve", id], done: "\(id) marked resolved.") } label: { Label("Mark resolved", systemImage: "checkmark") }
+                        .buttonStyle(PrimaryButton())
+                } else {
+                    Button { store.run("resolve", ["incident", "resolve", id], done: "\(id) marked resolved.") } label: { Label("Mark resolved", systemImage: "checkmark") }
+                        .buttonStyle(SecondaryButton()).help("Closes the incident. Anything still unfixed stays in Needs you until Bastion sees it fixed.")
+                }
             }
         }
     }
 }
 
 struct IncidentMain: View {
+    @ObservedObject var store: AppStore
     let inc: JSON
     private var actions: [JSON] { inc["actions"] as? [JSON] ?? [] }
     var body: some View {
@@ -954,8 +1202,10 @@ struct IncidentMain: View {
                 Text(withoutTodoCount(inc["summary"])).font(uiFont(22, .semibold)).foregroundStyle(DT.text).fixedSize(horizontal: false, vertical: true)
                 Text(lede).font(uiFont(13.5)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
             }
+            if inc["status"] as? String != "resolved", inc["all_done"] as? Bool == true { allDone }
             happened
             if inc["status"] as? String != "resolved" { todos }
+            if !(inc["done"] as? [JSON] ?? []).isEmpty { doneList }
             did
             timeline
         }
@@ -969,9 +1219,47 @@ struct IncidentMain: View {
         }
     }
 
+    private var allDone: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundStyle(DT.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Everything on the list is done").font(uiFont(13.5, .semibold)).foregroundStyle(DT.text)
+                Text("Bastion checked again and nothing from this incident is left.").font(uiFont(12.5)).foregroundStyle(DT.dim)
+            }
+            Spacer()
+            if let id = inc["id"] as? String {
+                Button { store.run("resolve", ["incident", "resolve", id], done: "\(id) marked resolved.") } label: { Label("Mark resolved", systemImage: "checkmark") }
+                    .buttonStyle(PrimaryButton())
+            }
+        }
+        .padding(14)
+        .background(DT.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.green.opacity(0.35)))
+    }
+
+    private var doneList: some View {
+        let done = inc["done"] as? [JSON] ?? []
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Done", trailing: "\(done.count)")
+            RowGroup {
+                ForEach(done.indices, id: \.self) { i in
+                    if i > 0 { Hairline() }
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(DT.green)
+                        Text(done[i]["title"] as? String ?? "").font(uiFont(12.5)).foregroundStyle(DT.text.opacity(0.75)).strikethrough(true, color: DT.faint)
+                        Spacer()
+                        Text(done[i]["how"] as? String == "ticked" ? "marked done" : "fixed — Bastion checked").font(uiFont(11.5)).foregroundStyle(DT.faint)
+                        Text(ago(done[i]["time"])).font(uiFont(11.5)).foregroundStyle(DT.faint)
+                    }.padding(.horizontal, 14).padding(.vertical, 10)
+                }
+            }
+        }
+    }
+
     private var happened: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "What happened")
+            ForEach(Array((inc["branch_details"] as? [JSON] ?? []).enumerated()), id: \.offset) { _, b in branchBlock(b) }
             ForEach(Array((inc["repos"] as? [JSON] ?? []).enumerated()), id: \.offset) { _, repo in
                 ForEach(Array((repo["files"] as? [JSON] ?? []).enumerated()), id: \.offset) { _, f in fileBlock(f, repo: repo["path"] as? String ?? "") }
                 ForEach(Array((repo["hooks"] as? [JSON] ?? []).enumerated()), id: \.offset) { _, h in
@@ -982,6 +1270,29 @@ struct IncidentMain: View {
                 note("exclamationmark.octagon.fill", DT.red, m["title"] as? String ?? "", tildePath(m["path"] as? String ?? (m["ip"] as? String) ?? ""), m["explanation"] as? String ?? "")
             }
         }
+    }
+
+    private func branchBlock(_ b: JSON) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.branch").font(.system(size: 12)).foregroundStyle(DT.orange)
+                Text(b["ref"] as? String ?? "").font(codeFont(12.5, .medium)).foregroundStyle(DT.text).textSelection(.enabled)
+                Text(tildePath(b["repo"] as? String ?? "")).font(uiFont(12)).foregroundStyle(DT.faint)
+                Spacer()
+                if let d = b["default_branch"] as? String, b["default_clean"] as? Bool == true { Pill(text: "\(d) is clean", dot: DT.green) }
+            }
+            if let c = b["last_commit"] as? JSON {
+                Text("Last commit \(c["short"] as? String ?? "") by \(c["author"] as? String ?? "") · \(shortTime(c["date"])) · “\(c["subject"] as? String ?? "")”")
+                    .font(uiFont(12.5)).foregroundStyle(DT.dim).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(Array((b["proof"] as? [JSON] ?? []).enumerated()), id: \.offset) { _, p in
+                Text("\(p["file"] as? String ?? ""): \(p["text"] as? String ?? "")").font(codeFont(11)).foregroundStyle(DT.dim)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(DT.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
     }
 
     private func note(_ icon: String, _ tint: Color, _ title: String, _ target: String, _ why: String) -> some View {
@@ -1037,26 +1348,46 @@ struct IncidentMain: View {
     }
 
     private var todos: some View {
-        let list = (inc["todos"] as? [JSON] ?? []).filter { !(($0["cmd"] as? String) ?? "").hasPrefix("bastion incident resolve") }
+        let ticked = Set(inc["ticked"] as? [String] ?? [])
+        let list = (inc["todos"] as? [JSON] ?? []).filter {
+            !(($0["cmd"] as? String) ?? "").hasPrefix("bastion incident resolve") && !ticked.contains($0["key"] as? String ?? "")
+        }
         return VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "Your to-dos", trailing: "\(list.count)")
+            SectionLabel(text: "Your to-dos", trailing: list.isEmpty ? "none left" : "\(list.count)")
+            if !list.isEmpty {
             RowGroup {
                 ForEach(Array(list.enumerated()), id: \.offset) { n, t in
                     if n > 0 { Hairline() }
+                    let key = t["key"] as? String ?? ""
+                    let live = store.todos.first { $0["id"] as? String == t["item_id"] as? String }
                     HStack(alignment: .top, spacing: 12) {
-                        Circle().strokeBorder(DT.dim, lineWidth: 1.4).frame(width: 14, height: 14).padding(.top, 2)
+                        Button { if !key.hasPrefix("branch:"), let id = inc["id"] as? String { store.tick(id, key) } } label: {
+                            Circle().strokeBorder(DT.dim, lineWidth: 1.4).frame(width: 14, height: 14)
+                        }.buttonStyle(.plain).padding(.top, 2)
+                            .help(key.hasPrefix("branch:") ? "Ticks itself once Bastion sees the branch fixed" : "Mark done")
                         VStack(alignment: .leading, spacing: 6) {
                             Text(t["title"] as? String ?? "").font(uiFont(13, .medium)).foregroundStyle(DT.text).fixedSize(horizontal: false, vertical: true)
                             if let why = t["why"] as? String, !why.isEmpty { Text(why).font(uiFont(12.5)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true) }
                             if let how = t["how"] as? String, !how.isEmpty { Text(how).font(uiFont(12.5)).foregroundStyle(DT.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true) }
                             if let cmd = t["cmd"] as? String, !cmd.isEmpty { CommandBlock(text: cmd).padding(.top, 2) }
-                            if let link = t["link"] as? String, let url = URL(string: link) {
-                                Button { NSWorkspace.shared.open(url) } label: { Label("See it on GitHub", systemImage: "arrow.up.right.square") }
-                                    .buttonStyle(SecondaryButton()).padding(.top, 2)
-                            }
+                            HStack(spacing: 8) {
+                                if let live, (live["fix"] as? JSON)?["runnable"] as? Bool == true {
+                                    let busy = store.busy.contains("fix:" + (live["id"] as? String ?? ""))
+                                    Button { store.fix(live) } label: { Text(busy ? "Working…" : ((live["fix"] as? JSON)?["button"] as? String ?? "Fix it")) }
+                                        .buttonStyle(PrimaryButton()).disabled(busy)
+                                }
+                                if let link = t["link"] as? String, let url = URL(string: link) {
+                                    Button { NSWorkspace.shared.open(url) } label: { Label("See it on GitHub", systemImage: "arrow.up.right.square") }
+                                        .buttonStyle(SecondaryButton())
+                                }
+                                if !key.hasPrefix("branch:"), let id = inc["id"] as? String {
+                                    Button { store.tick(id, key) } label: { Label("Mark done", systemImage: "checkmark") }.buttonStyle(SecondaryButton())
+                                }
+                            }.padding(.top, 2)
                         }
                     }.padding(14)
                 }
+            }
             }
         }
     }
@@ -1106,12 +1437,13 @@ struct IncidentProperties: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 card("Properties") {
-                    prop("Status") { HStack(spacing: 7) { StatusIcon(status: status, size: 13); Text(status.capitalized).font(uiFont(12.5, .medium)).foregroundStyle(DT.text) } }
+                    let shown = status != "resolved" && (inc["open_todos"] as? Int ?? 0) > 0 ? "open" : status
+                    prop("Status") { HStack(spacing: 7) { StatusIcon(status: shown, size: 13); Text(shown == "open" ? "Needs you" : status.capitalized).font(uiFont(12.5, .medium)).foregroundStyle(DT.text) } }
                     prop("Ran here") {
                         let ran = inc["ran"] as? String ?? "no sign"
                         Text(ran == "yes" ? "Yes" : ran == "possibly" ? "Possibly" : "No sign").font(uiFont(12.5)).foregroundStyle(ran == "no sign" ? DT.text : DT.orange)
                     }
-                    prop("Mode") { Text((inc["mode"] as? String ?? "").capitalized).font(uiFont(12.5)).foregroundStyle(DT.text) }
+                    prop("Mode") { Text(inc["mode"] as? String == "observe" ? "Report only" : "Contain").font(uiFont(12.5)).foregroundStyle(DT.text) }
                     prop("Opened") { Text(shortTime(inc["opened"])).font(uiFont(12.5)).foregroundStyle(DT.text) }
                     prop("Updated") { Text(shortTime(inc["updated"])).font(uiFont(12.5)).foregroundStyle(DT.text) }
                 }
@@ -1246,8 +1578,10 @@ struct RepoRow: View {
             health(path).frame(width: 130, alignment: .leading)
             Text(repo["branch"] as? String ?? "").font(codeFont(12)).foregroundStyle(DT.text.opacity(0.85)).lineLimit(1).frame(width: 120, alignment: .leading)
             HStack(spacing: 6) {
-                Circle().fill(g == "protected" ? DT.green : g == "unprotected" ? DT.orange : DT.faint).frame(width: 7, height: 7)
-                Text(g == "protected" ? "On" : g == "unprotected" ? "Off" : "Own hooks").font(uiFont(12.5)).foregroundStyle(DT.text.opacity(0.85))
+                Circle().fill(g == "protected" ? DT.green : g == "unprotected" || g == "husky" ? DT.orange : DT.faint).frame(width: 7, height: 7)
+                Text(g == "protected" ? "On" : g == "unprotected" ? "Off" : g == "husky" ? "Off (husky)" : "Own hooks").font(uiFont(12.5)).foregroundStyle(DT.text.opacity(0.85))
+                    .help(g == "husky" ? "This repo manages git hooks with husky. Use ⋯ → Protect on push to add Bastion's check to .husky/pre-push."
+                          : g == "custom_hooks" ? "This repo runs its own git hooks, so Bastion doesn't add one automatically." : "")
             }.frame(width: 120, alignment: .leading)
             HStack(spacing: 4) {
                 Button(store.busy.contains("check:" + path) ? "Checking…" : "Check") { store.check(path) }
@@ -1255,6 +1589,13 @@ struct RepoRow: View {
                 Menu {
                     Button("Hunt git history") { store.present("History · \(repo["name"] as? String ?? "")", "history:" + path, ["history", path]) }
                     Button("Check dependencies") { store.present("Dependencies · \(repo["name"] as? String ?? "")", "deps:" + path, ["deps", path]) }
+                    if g == "husky" {
+                        Button("Protect on push (husky)…") {
+                            store.ask("Protect \(repo["name"] as? String ?? "") on push?", "Bastion adds 2 lines to .husky/pre-push. Commit the change so the check stays part of the repo; it does nothing on machines without Bastion.", button: "Add") {
+                                store.run("husky:" + path, ["enable", "git-guard", "--husky", path])
+                            }
+                        }
+                    }
                     if repo["pr_guard"] as? Bool != true {
                         Button("Add Team PR guard…") {
                             store.ask("Add the PR guard to \(repo["name"] as? String ?? "")?", "Bastion writes .github/workflows/bastion.yml. Commit and push it yourself — every pull request is checked from then on.", button: "Add") {
@@ -1424,14 +1765,32 @@ struct AgentsPage: View {
                             .font(uiFont(13)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                let found = store.agents.filter { $0["installed"] as? Bool == true }
+                if !found.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: "Your agents")
+                        Text("Connected agents check a repo with Bastion before they run npm in it, and can hand problems to Bastion.")
+                            .font(uiFont(12.5)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
+                        RowGroup {
+                            ForEach(found.indices, id: \.self) { i in
+                                if i > 0 { Hairline() }
+                                agentRow(found[i])
+                            }
+                        }
+                    }
+                }
                 VStack(alignment: .leading, spacing: 10) {
                     SectionLabel(text: "Hard-guard")
                     Text("Hooks that stop an agent's install, dev, build or test command before it runs in an unsafe repo — enforced, not just instructed.")
                         .font(uiFont(12.5)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
+                    let installed = Set(store.agents.filter { $0["installed"] as? Bool == true }.compactMap { $0["id"] as? String })
+                    let guards = [("claude", "Claude Code", "~/.claude/settings.json"), ("cursor", "Cursor", "~/.cursor/hooks.json")]
+                        .filter { store.agents.isEmpty || installed.contains($0.0) }
                     RowGroup {
-                        guardRow("claude", "Claude Code", "~/.claude/settings.json")
-                        Hairline()
-                        guardRow("cursor", "Cursor", "~/.cursor/hooks.json")
+                        ForEach(guards.indices, id: \.self) { i in
+                            if i > 0 { Hairline() }
+                            guardRow(guards[i].0, guards[i].1, guards[i].2)
+                        }
                     }
                 }
                 setup("Claude Code", "Run once in a terminal.", "claude mcp add --scope user bastion -- \(short) mcp")
@@ -1458,6 +1817,30 @@ struct AgentsPage: View {
             }
         }
     }
+    private func agentRow(_ a: JSON) -> some View {
+        let id = a["id"] as? String ?? "", name = a["name"] as? String ?? ""
+        let on = a["connected"] as? Bool ?? false
+        return HStack(spacing: 12) {
+            Image(systemName: on ? "checkmark.circle.fill" : "circle.dashed").font(.system(size: 14)).foregroundStyle(on ? DT.green : DT.dim).frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(uiFont(13, .medium)).foregroundStyle(DT.text)
+                Text(on ? "Connected" + ((a["hard_guard"] as? Bool) == true ? " · hard-guarded" : "")
+                        : "Not connected · config: \(a["config"] as? String ?? "")").font(uiFont(12)).foregroundStyle(DT.dim)
+            }
+            Spacer()
+            if store.busy.contains("connect:" + id) { ProgressView().controlSize(.small).scaleEffect(0.7) }
+            if !on {
+                if a["can_connect"] as? Bool == true {
+                    Button("Connect") { store.run("connect:" + id, ["connect", id, "--write"]) }.buttonStyle(PrimaryButton())
+                } else if let cmd = a["connect_command"] as? String {
+                    Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(cmd, forType: .string); store.flash("Copied — run it in a terminal where Claude Code's `claude` command is installed.") } label: {
+                        Label("Copy command", systemImage: "doc.on.doc")
+                    }.buttonStyle(SecondaryButton()).help(cmd)
+                }
+            }
+        }.padding(.horizontal, 14).padding(.vertical, 12)
+    }
+
     private func guardRow(_ agent: String, _ name: String, _ file: String) -> some View {
         let on = store.hooks[agent] as? Bool ?? false
         return HStack(spacing: 12) {
@@ -1769,6 +2152,7 @@ struct ResultSheet: View {
                     }
                     section("Branches that still carry it", j["infected_branches"]) { b in (b["ref"] as? String ?? "", b["file"] as? String ?? "", "") }
                     section("Left over from deleted branches", j["unreachable"]) { o in ("\(o["short"] as? String ?? "")  \(o["file"] as? String ?? "")", o["subject"] as? String ?? "", "") }
+                    if let out = j["output"] as? String, !out.isEmpty { CommandBlock(text: out) }
                     if let note = j["note"] as? String { Text(note).font(uiFont(12)).foregroundStyle(DT.dim) }
                     if let e = j["online_error"] as? String { Text(e).font(uiFont(12)).foregroundStyle(DT.orange) }
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
@@ -1795,5 +2179,105 @@ struct ResultSheet: View {
                 }
             }
         }
+    }
+}
+
+
+// MARK: - One status, everywhere
+
+struct StateLook { let title: String; let short: String; let detail: String; let tint: Color }
+
+@MainActor func stateLook(_ store: AppStore) -> StateLook {
+    let n = store.needsYouCount
+    switch store.state {
+    case "act_now":
+        let t = max((store.status["active_threats"] as? [Any])?.count ?? 0, 1)
+        return StateLook(title: "Act now — \(t) active threat\(t == 1 ? "" : "s")", short: "Act now", detail: "Something is running, or will run as soon as npm runs there.", tint: DT.red)
+    case "clean_up":
+        return StateLook(title: "\(n) thing\(n == 1 ? "" : "s") to clean up", short: "\(n) to clean up", detail: "Nothing is running.", tint: DT.orange)
+    default:
+        return StateLook(title: "All clear", short: "All clear", detail: "Nothing needs you.", tint: DT.green)
+    }
+}
+
+// MARK: - Next steps (setup that's still open)
+
+struct NextStepsGroup: View {
+    @ObservedObject var store: AppStore
+    @State private var showDone = false
+    @State private var showAll = false
+    var body: some View {
+        let open = store.steps.filter { $0["done"] as? Bool != true }.sorted { ($0["optional"] as? Bool == true ? 1 : 0) < ($1["optional"] as? Bool == true ? 1 : 0) }
+        let done = store.steps.filter { $0["done"] as? Bool == true }
+        let required = store.steps.filter { $0["optional"] as? Bool != true }
+        let bulk = open.filter { $0["bulk"] as? Bool == true }
+        let shown = showAll ? open : Array(open.prefix(5))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionLabel(text: "Next steps", trailing: "\(required.filter { $0["done"] as? Bool == true }.count) of \(required.count) done")
+                if !bulk.isEmpty {
+                    Button { store.doRecommended() } label: {
+                        Text(store.busy.contains("steps") ? "Turning on…" : "Turn on \(bulk.count) protection\(bulk.count == 1 ? "" : "s")")
+                    }.buttonStyle(PrimaryButton()).disabled(store.busy.contains("steps"))
+                        .help(bulk.compactMap { $0["title"] as? String }.joined(separator: "\n"))
+                }
+            }
+            RowGroup {
+                ForEach(shown.indices, id: \.self) { i in
+                    if i > 0 { Hairline() }
+                    row(shown[i])
+                }
+                if open.count > 5 {
+                    Hairline()
+                    Button { withAnimation(.easeOut(duration: 0.15)) { showAll.toggle() } } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: showAll ? "chevron.up" : "chevron.down").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(DT.faint)
+                            Text(showAll ? "Show fewer" : "Show \(open.count - 5) more").font(uiFont(12.5)).foregroundStyle(DT.dim)
+                            Spacer()
+                        }.padding(.horizontal, 14).frame(height: 34).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                }
+                if !done.isEmpty {
+                    Hairline()
+                    Button { withAnimation(.easeOut(duration: 0.15)) { showDone.toggle() } } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: showDone ? "chevron.down" : "chevron.right").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(DT.faint)
+                            Text("\(done.count) done").font(uiFont(12.5)).foregroundStyle(DT.dim)
+                            Spacer()
+                        }.padding(.horizontal, 14).frame(height: 34).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                    if showDone { ForEach(done.indices, id: \.self) { i in Hairline(); row(done[i]) } }
+                }
+            }
+        }
+    }
+
+    private func row(_ s: JSON) -> some View {
+        let done = s["done"] as? Bool == true
+        let id = s["id"] as? String ?? ""
+        let action = s["action"] as? [String] ?? []
+        let label: String = {
+            if action.first == "connect" { return "Connect" }
+            if action.first == "hooks" { return "Add" }
+            if action.contains("--husky") { return "Protect…" }
+            if action.first == "enable" && action.dropFirst().first == "git-guard" { return "Protect" }
+            if action.isEmpty { return "Show me" }
+            return "Turn on"
+        }()
+        return HStack(spacing: 12) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle").font(.system(size: 14)).foregroundStyle(done ? DT.green : DT.dim).frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(s["title"] as? String ?? "").font(uiFont(13, .medium)).foregroundStyle(done ? DT.dim : DT.text)
+                    if s["optional"] as? Bool == true { Text("Optional").font(uiFont(10.5, .medium)).foregroundStyle(DT.faint).padding(.horizontal, 5).frame(height: 16).background(DT.surface2, in: Capsule()) }
+                }
+                if !done { Text(s["why"] as? String ?? "").font(uiFont(12)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true) }
+            }
+            Spacer()
+            if store.busy.contains("step:" + id) { ProgressView().controlSize(.small).scaleEffect(0.7) }
+            if !done {
+                Button(label) { store.doStep(s) }.buttonStyle(SecondaryButton()).disabled(store.busy.contains("step:" + id))
+            }
+        }.padding(.horizontal, 14).padding(.vertical, done ? 8 : 12)
     }
 }

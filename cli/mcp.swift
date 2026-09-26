@@ -41,6 +41,9 @@ let TOOLS: [[String: Any]] = [
     ["name": "bastion_findings", "title": "Last scan findings",
      "description": "Findings from the most recent scan, each with severity, a plain-language explanation, exact remediation steps, and whether it is still present or was quarantined. Read-only.",
      "inputSchema": schema(), "annotations": annotations("Last scan findings", readOnly: true)],
+    ["name": "bastion_todos", "title": "What needs the user",
+     "description": "Everything that needs the user right now, most urgent first: active threats, infected branches (with proof: the exact line and column where the code hides) and open incident steps. Each item has a danger level (now, dormant, leftover, check) and the fix. Fixes are the user's to run — show them, don't run git commands that change the server yourself.",
+     "inputSchema": ["type": "object", "properties": [String: Any](), "additionalProperties": false], "annotations": ["readOnlyHint": true]],
     ["name": "bastion_activity", "title": "Recent activity",
      "description": "Recent security events, newest first: loaders killed, attacker connections cut, items quarantined, commands blocked, settings changed. Read-only.",
      "inputSchema": schema(["limit": ["type": "integer", "minimum": 1, "maximum": 200, "description": "How many events (default 20)."] as [String: Any]]),
@@ -93,6 +96,7 @@ func callTool(_ name: String, _ a: [String: Any]) throws -> [String: Any] {
         let paths = (a["paths"] as? [Any])?.compactMap { $0 as? String } ?? []
         return try scan(paths: paths, fullHome: a["full_home"] as? Bool ?? false, readOnly: a["read_only"] as? Bool ?? false)
     case "bastion_findings": return findingsReport()
+    case "bastion_todos": return todosReport(network: true)
     case "bastion_activity": return ["events": activity(limit: min(max(a["limit"] as? Int ?? 20, 1), 200))]
     case "bastion_quarantine":
         return ["items": quarantineItems(), "note": "Restoring is left to the user: bastion quarantine restore <id>"]

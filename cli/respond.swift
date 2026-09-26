@@ -386,7 +386,8 @@ func incidentBrief(_ i: [String: Any]) -> [String: Any] {
     let id = i["id"] as? String ?? ""
     let repos = (i["repos"] as? [[String: Any]] ?? []).compactMap { ($0["path"] as? String).map { ($0 as NSString).lastPathComponent } }
     return ["id": id, "status": i["status"] ?? "open", "summary": i["summary"] ?? "", "opened": i["opened"] ?? "", "repos": repos,
-            "updated": i["updated"] ?? "", "todos": max(((i["todos"] as? [Any])?.count ?? 1) - 1, 0),
+            "updated": i["updated"] ?? "",
+            "todos": (i["todos"] as? [[String: Any]] ?? []).filter { let k = $0["key"] as? String ?? ""; return k != "resolve" && !((i["ticked"] as? [String]) ?? []).contains(k) && !(($0["cmd"] as? String) ?? "").hasPrefix("bastion incident resolve") }.count,
             "report": engine("incidents/\(id)/report.md")]
 }
 
@@ -409,13 +410,13 @@ func branchKey(_ f: [String: Any]) -> String {
     "\(f["path"] as? String ?? "")|\(f["ref"] as? String ?? "")|\(f["file"] as? String ?? "")|\(f["commit"] as? String ?? "")"
 }
 
-func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromLog: String? = nil) throws -> [String: Any] {
+func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromLog: String? = nil, forceContain: Bool = false) throws -> [String: Any] {
     try requireEngine()
     let level = autonomy()
     if (trigger == "watcher" || trigger == "scan") && level == "off" {
         return ["status": "skipped", "reason": "Auto-respond is off (bastion autonomy contain turns it on)."]
     }
-    let mode = planOnly || level != "contain" ? "observe" : "contain"
+    let mode = planOnly || (level != "contain" && !forceContain) ? "observe" : "contain"
     let lock = engine("respond.lock")
     guard acquireLock(lock, wait: wait) else { return ["status": "skipped", "reason": "Another response is already running."] }
     defer { try? fm.removeItem(atPath: lock) }
@@ -787,7 +788,7 @@ func buildTodos(_ inc: [String: Any]) -> [[String: String]] {
             let proofText = proofs.map { "\($0["file"] as? String ?? ""): \($0["text"] as? String ?? "")" }.joined(separator: "\n")
             var cmd = (fix["commands"] as? [String] ?? []).joined(separator: "\n")
             if let see = proofs.first?["see_it"] as? String { cmd = "# see it yourself:\n\(see)\n# fix:\n" + cmd }
-            var todo: [String: String] = ["title": "\(fix["title"] as? String ?? "Clean \(c["ref"] ?? "")") (\(name))",
+            var todo: [String: String] = ["key": "branch:\(repo)|\(c["ref"] as? String ?? "")", "item_id": stableID("branch|\(repo)|\(c["ref"] as? String ?? "")"), "title": "\(fix["title"] as? String ?? "Clean \(c["ref"] ?? "")") (\(name))",
                                           "why": (fix["why"] as? String ?? "") + (proofText.isEmpty ? "" : "\n" + proofText), "cmd": cmd]
             if let url = proofs.first?["github_url"] as? String { todo["link"] = url }
             todos.append(todo)
@@ -843,8 +844,8 @@ func buildTodos(_ inc: [String: Any]) -> [[String: String]] {
                                "why": "Bastion found no sign the payload ran, but it runs the moment a dev server loads the file.", "how": list])
         }
     }
-    todos.append(["title": "Mark this incident resolved when you're done", "why": "It clears the incident from Bastion.", "cmd": "bastion incident resolve \(id)"])
-    return todos
+    todos.append(["key": "resolve", "title": "Mark this incident resolved when you're done", "why": "It clears the incident from Bastion.", "cmd": "bastion incident resolve \(id)"])
+    return todos.map { t in var t = t; if t["key"] == nil { t["key"] = "t:" + stableID(t["title"] ?? "") }; return t }
 }
 
 /// A proposal stays on the list only while it still applies and nothing later has already done it.
@@ -872,9 +873,10 @@ func buildSummary(_ inc: [String: Any]) -> String {
     let k = done("kill", "stop_process"); if k > 0 { did.append("stopped \(k) process\(k == 1 ? "" : "es")") }
     let q = done("quarantine"); if q > 0 { did.append("quarantined \(q) item\(q == 1 ? "" : "s")") }
     let b = done("block"); if b > 0 { did.append("blocked \(b) address\(b == 1 ? "" : "es")") }
-    // repos that still have something in this incident (a branch fixed since doesn't count)
+    // repos that still have something in this incident (a branch fixed since doesn't count) — all of them once it's resolved
+    let resolvedNow = inc["status"] as? String == "resolved"
     let repoList = (inc["repos"] as? [[String: Any]] ?? []).filter { r in
-        ["files", "hooks", "branches", "dependencies"].contains { !((r[$0] as? [Any]) ?? []).isEmpty } }
+        resolvedNow || ["files", "hooks", "branches", "dependencies"].contains { !((r[$0] as? [Any]) ?? []).isEmpty } }
     let repos = repoList.count
     let scope = repos > 0 ? "an attack on \(repos) repo\(repos == 1 ? "" : "s")" : "signs of malware on this Mac"
     // only dormant branches: nothing ran and nothing needed containing, so don't call it "contained an attack"
@@ -1026,4 +1028,60 @@ func blockIndicator(_ ip: String, incident: String?) throws -> [String: Any] {
     logEvent("CHANGED: blocklist — added \(ip) (AI agent, evidence \(id))")
     notify("An AI agent blocked \(ip) — evidence: \(id).")
     return ["ip": ip, "blocked": true, "changed": true, "evidence": id]
+}
+
+
+// MARK: - Keeping an incident current
+
+/// Re-checks an open incident against what's true now: branches that were fixed drop out of it and their to-dos move to
+/// "done"; to-dos the user ticked stay done. Saved only when something changed.
+@discardableResult
+func refreshIncident(_ inc: [String: Any]) -> [String: Any] {
+    guard (inc["status"] as? String) != "resolved" else { return inc }
+    var inc = inc
+    let live = Set(liveBranchFindings().map { "\($0["path"] as? String ?? "")|\($0["ref"] as? String ?? "")|\($0["file"] as? String ?? "")" })
+    var repos = inc["repos"] as? [[String: Any]] ?? []
+    var changed = false
+    for i in repos.indices {
+        let path = repos[i]["path"] as? String ?? ""
+        let before = repos[i]["branches"] as? [[String: Any]] ?? []
+        let now = before.filter { live.contains("\(path)|\($0["ref"] as? String ?? "")|\($0["file"] as? String ?? "")") }
+        if now.count != before.count { repos[i]["branches"] = now; changed = true }
+    }
+    let ticked = Set(inc["ticked"] as? [String] ?? [])
+    let oldTodos = inc["todos"] as? [[String: Any]] ?? []
+    if changed {
+        inc["repos"] = repos
+        let fresh = buildTodos(inc)
+        let freshKeys = Set(fresh.compactMap { $0["key"] })
+        var done = inc["done"] as? [[String: Any]] ?? []
+        for t in oldTodos {
+            guard let key = t["key"] as? String, key != "resolve", !freshKeys.contains(key), !done.contains(where: { $0["key"] as? String == key }) else { continue }
+            done.append(["key": key, "title": t["title"] ?? "", "how": "fixed", "time": isoTime(Date())])
+        }
+        inc["done"] = done
+        inc["todos"] = fresh
+        inc["summary"] = buildSummary(inc)
+        inc["updated"] = isoTime(Date())
+        inc["timeline"] = (inc["timeline"] as? [[String: Any]] ?? []) + [["time": isoTime(Date()), "event": "Re-checked: some branches were fixed."]]
+        saveIncident(inc)
+    }
+    let open = (inc["todos"] as? [[String: Any]] ?? []).filter { let k = $0["key"] as? String ?? ""; return k != "resolve" && !ticked.contains(k) }
+    inc["open_todos"] = open.count
+    inc["all_done"] = open.isEmpty
+    return inc
+}
+
+/// The user says a to-do Bastion can't check (rotating secrets, removing access…) is done.
+func tickTodo(_ id: String, _ key: String) throws -> [String: Any] {
+    guard var inc = findIncident(id) else { throw Failure("No incident \(id).") }
+    let todos = inc["todos"] as? [[String: Any]] ?? []
+    guard let t = todos.first(where: { $0["key"] as? String == key }) else { throw Failure("Incident \(id) has no to-do \(key).") }
+    var ticked = inc["ticked"] as? [String] ?? []
+    if !ticked.contains(key) { ticked.append(key) }
+    inc["ticked"] = ticked
+    inc["done"] = (inc["done"] as? [[String: Any]] ?? []) + [["key": key, "title": t["title"] ?? "", "how": "ticked", "time": isoTime(Date())]]
+    inc["updated"] = isoTime(Date())
+    saveIncident(inc)
+    return refreshIncident(inc)
 }

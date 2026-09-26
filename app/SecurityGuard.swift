@@ -68,10 +68,12 @@ final class GuardModel: ObservableObject {
     @Published var incidentSummary = ""
     @Published var incidentTodos = 0
     @Published var autonomy = "contain"
+    @Published var state = "all_clear"          // act_now · clean_up · all_clear (same answer as the window)
+    @Published var needsYou = 0
 
     let dir = HOME_DIR + "/.security-guard"
     let home = HOME_DIR
-    let version = "4.1.3"
+    let version = "4.2.0"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 
@@ -125,6 +127,7 @@ final class GuardModel: ObservableObject {
             let inc = cs?["incident"] as? [String: Any]
             let (incId, incStatus, incSummary, incTodos) = (inc?["id"] as? String ?? "", inc?["status"] as? String ?? "", inc?["summary"] as? String ?? "", inc?["todos"] as? Int ?? 0)
             let level = cs?["autonomy"] as? String ?? "contain"
+            let st = cs?["state"] as? String ?? "all_clear", ny = cs?["needs_you"] as? Int ?? 0
             if let n = (cs?["active_threats"] as? [Any])?.count { active = n }   // live loaders, C2 links, unresolved scan findings
             else {
                 if liveLoader { active += 1 }
@@ -141,6 +144,7 @@ final class GuardModel: ObservableObject {
                     self.agentLinked = linked
                     self.incidentId = incId; self.incidentStatus = incStatus; self.incidentSummary = incSummary; self.incidentTodos = incTodos
                     self.autonomy = level
+                    self.state = st; self.needsYou = ny
                 }
             }
         }
@@ -312,9 +316,8 @@ struct BrandMark: View {
 struct PanelView: View {
     @ObservedObject var model: GuardModel
     @Environment(\.openWindow) private var openWindow
-    @State private var reposOnly = false
     @State private var ticker: Timer?
-    private var tint: Color { model.clean ? DT.green : DT.orange }
+    private var tint: Color { model.state == "act_now" ? DT.red : model.state == "clean_up" ? DT.orange : DT.green }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -323,7 +326,7 @@ struct PanelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     status
-                    if !model.incidentId.isEmpty { incident }
+                    if model.needsYou > 0 { incident }
                     stats
                     scan
                     protection
@@ -345,8 +348,8 @@ struct PanelView: View {
         .onDisappear { ticker?.invalidate(); ticker = nil }
     }
 
-    private func openMain(_ pane: Pane, incident: String? = nil) {
-        if let incident { Router.shared.open(incident: incident) } else { Router.shared.go(pane) }
+    private func openMain(_ pane: Pane, incident: String? = nil, needsYou: Bool = false) {
+        if needsYou { Router.shared.openNeedsYou() } else if let incident { Router.shared.open(incident: incident) } else { Router.shared.go(pane) }
         openWindow(id: "main")
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -372,28 +375,31 @@ struct PanelView: View {
         HStack(spacing: 12) {
             BrandMark(size: 38, tint: tint).shadow(color: tint.opacity(0.35), radius: 6, y: 2)
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.clean ? "You're protected" : "\(model.activeThreats) active threat\(model.activeThreats == 1 ? "" : "s")")
+                Text(model.state == "act_now" ? "Act now — \(max(model.activeThreats, 1)) active threat\(model.activeThreats == 1 ? "" : "s")"
+                     : model.state == "clean_up" ? "\(model.needsYou) thing\(model.needsYou == 1 ? "" : "s") to clean up" : "All clear")
                     .font(uiFont(15, .semibold)).foregroundStyle(DT.text)
-                Text("Last scan \(model.lastScan) · \(model.lastResult.lowercased())").font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
+                Text((model.state == "act_now" ? "Something is running or about to" : "Nothing is running") + " · last scan \(model.lastScan)")
+                    .font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
             }
             Spacer(minLength: 0)
         }
     }
 
     private var incident: some View {
-        Button { openMain(.incidents, incident: model.incidentId) } label: {
+        Button { openMain(.incidents, needsYou: true) } label: {
             HStack(spacing: 10) {
-                PanelStatusDot(open: model.incidentStatus != "contained")
+                PanelStatusDot(open: true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.incidentStatus == "contained" ? "Attack contained" : "Incident needs you").font(uiFont(12.5, .semibold)).foregroundStyle(DT.text)
-                    Text("\(model.incidentTodos) to-do\(model.incidentTodos == 1 ? "" : "s") · \(model.incidentId)").font(codeFont(10.5)).foregroundStyle(DT.dim)
+                    Text(model.state == "act_now" ? "Needs you now" : "Needs you").font(uiFont(12.5, .semibold)).foregroundStyle(DT.text)
+                    Text("\(model.needsYou) item\(model.needsYou == 1 ? "" : "s") with proof and a fix" + (model.incidentId.isEmpty ? "" : " · \(model.incidentId)"))
+                        .font(uiFont(11)).foregroundStyle(DT.dim).lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.faint)
             }
             .padding(10).contentShape(Rectangle())
             .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(model.incidentStatus == "contained" ? DT.accent.opacity(0.5) : DT.orange.opacity(0.5)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder((model.state == "act_now" ? DT.red : DT.orange).opacity(0.5)))
         }.buttonStyle(.plain)
     }
 
@@ -401,7 +407,7 @@ struct PanelView: View {
         HStack(spacing: 0) {
             stat(model.statsLoading ? "–" : "\(model.reposMonitored)", "Repos")
             Rectangle().fill(DT.hairline).frame(width: 1)
-            stat(model.statsLoading ? "–" : "\(model.configsMonitored)", "Configs")
+            stat("\(model.needsYou)", "Needs you", warn: model.needsYou > 0)
             Rectangle().fill(DT.hairline).frame(width: 1)
             stat("\(model.quarantineCount)", "Quarantined", warn: model.quarantineCount > 0)
         }
@@ -419,7 +425,7 @@ struct PanelView: View {
 
     private var scan: some View {
         HStack(spacing: 10) {
-            Button { model.scanNow(reposOnly: reposOnly) } label: {
+            Button { model.scanNow(reposOnly: true) } label: {
                 HStack(spacing: 6) {
                     if model.scanning { ProgressView().controlSize(.small).scaleEffect(0.7).tint(.white) } else { Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)) }
                     Text(model.scanning ? "Scanning…" : "Scan now").font(uiFont(12.5, .semibold))
@@ -427,8 +433,6 @@ struct PanelView: View {
                 .foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 30)
                 .background(DT.accent.opacity(model.scanning ? 0.6 : 1), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             }.buttonStyle(.plain).disabled(model.scanning)
-            Toggle(isOn: $reposOnly) { Text("Repos only").font(uiFont(11.5)).foregroundStyle(DT.dim) }
-                .toggleStyle(.checkbox).controlSize(.small).help("Scan only git repositories (faster)")
         }
     }
 
@@ -523,7 +527,7 @@ struct BastionApp: App {
         MenuBarExtra {
             PanelView(model: model)
         } label: {
-            Image(systemName: model.clean && model.incidentStatus != "open" ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+            Image(systemName: model.state == "all_clear" ? "checkmark.shield.fill" : model.state == "act_now" ? "exclamationmark.octagon.fill" : "exclamationmark.shield.fill")
         }.menuBarExtraStyle(.window)
         Window("Bastion", id: "main") { MainWindow() }
             .windowStyle(.hiddenTitleBar)

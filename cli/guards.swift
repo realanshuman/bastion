@@ -704,7 +704,9 @@ func branchContext(repo: String, ref: String, files: [String]) -> [String: Any] 
                ["git -C \(r) commit -am \"Remove injected code\" && git -C \(r) push"]
         risk = "rewrites-nothing"
     }
-    out["fix"] = ["title": title, "why": why, "commands": cmds, "risk": risk]
+    let button = risk == "rewrites-history" ? "Push clean copy…" : risk == "deletes-branch" ? (remote == nil ? "Delete local branch…" : "Delete branch…")
+        : title.hasPrefix("Update") ? "Update branch" : "Fix it"
+    out["fix"] = ["title": title, "why": why, "commands": cmds, "risk": risk, "button": button]
     return out
 }
 

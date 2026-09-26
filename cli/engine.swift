@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "4.1.3"
+let VERSION = "4.2.0"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -236,16 +236,33 @@ func resolveDir(_ raw: String) throws -> String {
     return path
 }
 
+/// A value worth reusing for a few seconds (one command often needs it several times; the MCP server lives longer, so it expires).
+final class Memo<T>: @unchecked Sendable {
+    private var value: T?, made = Date.distantPast
+    private let lock = NSLock(), ttl: TimeInterval
+    init(ttl: TimeInterval) { self.ttl = ttl }
+    func reset() { lock.lock(); value = nil; lock.unlock() }
+    func get(_ make: () -> T) -> T {
+        lock.lock(); defer { lock.unlock() }
+        if let value, Date().timeIntervalSince(made) < ttl { return value }
+        let v = make(); value = v; made = Date(); return v
+    }
+}
+
+let REPO_ROOTS = Memo<[String]>(ttl: 5)
 func repoRoots() -> [String] {
-    run("/usr/bin/find", [HOME, "-maxdepth", "4", "-type", "d", "-name", ".git",
-                          "-not", "-path", "*/node_modules/*", "-not", "-path", "*/Library/*"], timeout: 90).out
-        .split(separator: "\n").map(String.init).filter { $0.hasSuffix("/.git") }.map { String($0.dropLast(5)) }.sorted()
+    REPO_ROOTS.get {
+        run("/usr/bin/find", [HOME, "-maxdepth", "4", "-type", "d", "-name", ".git",
+                              "-not", "-path", "*/node_modules/*", "-not", "-path", "*/Library/*"], timeout: 90).out
+            .split(separator: "\n").map(String.init).filter { $0.hasSuffix("/.git") }.map { String($0.dropLast(5)) }.sorted()
+    }
 }
 
 /// Every git repo with its branch, remote, push-guard state and open findings (cheap: no scanning, no git calls).
 func reposReport() -> [String: Any] {
     let last = scanLogPaths().last.map(parseScanLog)
-    let open = (last?["findings"] as? [[String: Any]] ?? []).filter { $0["path"] != nil && stillPresent($0) }
+    let open = (last?["findings"] as? [[String: Any]] ?? []).filter { $0["path"] != nil && $0["kind"] as? String != "infected_branch" && stillPresent($0) }
+    let liveBranches = liveBranchFindings()
     let repos = repoRoots().map { repo -> [String: Any] in
         let head = readText(repo + "/.git/HEAD").trimmed
         let branch = head.hasPrefix("ref: refs/heads/") ? String(head.dropFirst(16)) : String(head.prefix(8))
@@ -255,7 +272,7 @@ func reposReport() -> [String: Any] {
             remote = line.trimmed.dropFirst(6).replacingOccurrences(of: #"://[^/@\s]+@"#, with: "://", options: .regularExpression)
         }
         let mine = open.filter { ($0["path"] as? String ?? "").hasPrefix(repo + "/") }
-        let branches = (last?["findings"] as? [[String: Any]] ?? []).filter { $0["kind"] as? String == "infected_branch" && $0["path"] as? String == repo }
+        let branches = liveBranches.filter { $0["path"] as? String == repo }
         return ["path": repo, "name": (repo as NSString).lastPathComponent, "branch": branch, "remote": remote,
                 "git_guard": gitGuardState(repo), "findings": mine.count, "infected_branches": Set(branches.compactMap { $0["ref"] as? String }).count,
                 "infected_branch_files": branches.count, "pr_guard": prGuardInstalled(repo)]
@@ -267,7 +284,11 @@ let globalHooksPath = (readText(HOME + "/.gitconfig") + readText(HOME + "/.confi
 
 /// protected · unprotected · custom_hooks (the repo manages its own hooks; Bastion won't touch them)
 func gitGuardState(_ repo: String) -> String {
-    if globalHooksPath || readText(repo + "/.git/config").lowercased().contains("hookspath") { return "custom_hooks" }
+    if globalHooksPath || readText(repo + "/.git/config").lowercased().contains("hookspath") {
+        // husky keeps hooks in the repo (.husky/pre-push); Bastion can add its check there
+        if huskyRepo(repo) { return huskyGuarded(repo) ? "protected" : "husky" }
+        return "custom_hooks"
+    }
     let hook = repo + "/.git/hooks/pre-push"
     guard fm.fileExists(atPath: hook) else { return "unprotected" }
     let body = readText(hook)
@@ -406,6 +427,7 @@ func activity(limit: Int) -> [[String: Any]] {
         else if line.contains("QUARANTINED") || line.contains("quarantined,") { type = "quarantined" }
         else if line.contains("BLOCKED") { type = "blocked" }
         else if line.contains("CHANGED") { type = "setting_changed" }
+        else if line.contains("FIXED:") { type = "fixed" }
         else if line.contains("ALERT") || line.contains("need your attention") { type = "alert" }
         else { type = "event" }
         let parts = line.components(separatedBy: "  ")
@@ -460,16 +482,21 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     }
     // a payload on a branch that isn't checked out is latent: it's reported and becomes a to-do, not an active threat
     for f in (last?["findings"] as? [[String: Any]] ?? []) where f["path"] != nil && f["kind"] as? String != "infected_branch" && stillPresent(f) { threats.append(f) }
+    if let i = currentIncident() { refreshIncident(i) }
+    let attention = needsYou(threats: threats, detail: false)
 
     let protection: [String: Any] = ["watcher": agents.contains(WATCH_LABEL), "scheduled_scan": agents.contains(SCAN_LABEL),
                                      "exec_guard": execGuardOn()]
+    let setup = nextSteps().filter { $0["optional"] as? Bool != true }
     var out: [String: Any] = ["version": VERSION, "engine": ENGINE, "posture": threats.isEmpty ? "protected" : "at_risk", "responding": responseRunning(),
+                              "state": overallState(attention), "needs_you": attention.count,
+                              "setup": ["done": setup.filter { $0["done"] as? Bool == true }.count, "total": setup.count],
                               "active_threats": threats, "protection": protection, "quarantine_count": quarantine.count]
     if let last {
         // infected branches are latent (reported as to-dos), so they don't make the last scan "not clean"
         let found = last["findings"] as? [[String: Any]] ?? []
-        let branches = found.filter { $0["kind"] as? String == "infected_branch" }.count
-        let clean = (last["clean"] as? Bool ?? false) || (!found.isEmpty && branches == found.count)
+        let branches = Set(attention.filter { $0["type"] as? String == "branch" }.compactMap { $0["id"] as? String }).count
+        let clean = (last["clean"] as? Bool ?? false) || (!found.isEmpty && found.allSatisfy { $0["kind"] as? String == "infected_branch" })
         var ls: [String: Any] = ["result": clean && branches > 0 ? "CLEAN — \(branches) INFECTED BRANCH\(branches == 1 ? "" : "ES")" : last["result"] ?? "unknown",
                                  "clean": clean, "infected_branches": branches, "log": last["log"] ?? ""]
         if let t = last["time"] { ls["time"] = t }
@@ -479,6 +506,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
         out["git_guard"] = ["repos": rs.repos.count,
                             "protected": rs.states.filter { $0 == "protected" }.count,
                             "unprotected": rs.states.filter { $0 == "unprotected" }.count,
+                            "husky": rs.states.filter { $0 == "husky" }.count,
                             "custom_hooks": rs.states.filter { $0 == "custom_hooks" }.count]
     }
     var summary = threats.isEmpty ? "Protected." : "\(threats.count) active threat\(threats.count == 1 ? "" : "s") — see active_threats[].remediation."
@@ -646,7 +674,8 @@ func enable(_ f: Feature) throws -> [String: Any] {
             }
         }
         if !installed.isEmpty || !updated.isEmpty {
-            logEvent("CHANGED: git push guard added to \(installed.count) repo(s), updated in \(updated.count)")
+            logEvent("CHANGED: " + [installed.isEmpty ? nil : "push guard added to \(installed.count) repo\(installed.count == 1 ? "" : "s")",
+                                    updated.isEmpty ? nil : "push guard updated in \(updated.count) repo\(updated.count == 1 ? "" : "s")"].compactMap { $0 }.joined(separator: ", "))
         }
         return ["feature": f.rawValue, "enabled": true, "changed": !installed.isEmpty || !updated.isEmpty, "installed": installed,
                 "updated": updated, "already_protected": already, "skipped_custom_hooks": skipped,

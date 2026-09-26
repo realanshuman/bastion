@@ -37,7 +37,7 @@ what it can prove and hands you a short to-do list for the rest.
 
 - 🛡️ **Blocks it before it runs** — refuses to start a dev server or an install when a project has been tampered with.
 - 🧠 **Responds on its own** — investigates, removes injected code it can prove the attacker added, stops loaders, quarantines leftovers and blocks attacker servers.
-- 📋 **Tells you what's left** — commit the fix, clean the pushed branches, remove the attacker's access, rotate the secrets that were exposed. With the exact commands.
+- 📋 **Tells you exactly what needs you** — one live list with proof (the line and column where the hidden code sits, a GitHub link, a command to see it yourself) and the fix that fits each item, one click away. Items leave the list when Bastion sees them fixed.
 - 📦 **Checks your dependencies** — install scripts deep in `node_modules`, lockfiles that pull packages from odd servers, and (if you opt in) the osv.dev list of known malicious packages.
 - 🕵️ **Hunts through git history** — finds a payload on any branch, in the reflog, or left over from a deleted branch, and names the commit and identity that planted it.
 - 👥 **Guards your team** — a GitHub Action fails any pull request that carries a payload, so it never reaches `main`.
@@ -95,15 +95,21 @@ unsaved edits in it — those become to-dos. Choose how much it does on its own 
 
 ## The app
 
-- **Menu-bar panel** — a quick look: status, the current incident, and switches for each protection.
+- **One status everywhere** — *All clear*, *N things to clean up* (nothing is running) or *Act now*, the same in the
+  window, the sidebar, the menu-bar panel and its icon.
+- **Menu-bar panel** — a quick look: status, what needs you, and switches for each protection.
 - **The window** — everything else, in a keyboard-first layout:
-  - **Overview** — are you protected, the open incident, and every protection switch.
-  - **Incidents** — grouped by status; each one opens into the full investigation, to-dos and timeline.
+  - **Overview** — the status, a **Next steps** checklist for the setup that's still open (turn on protections in
+    one click, protect husky repos on push, connect your agents), and every protection switch.
+  - **Incidents → Needs you** — the live list: every threat, infected branch and open step, grouped by repo, each
+    with how dangerous it is right now, the proof and a fix button (anything that changes GitHub asks first).
+  - **Incidents → All incidents** — each one opens into the investigation, to-dos that tick themselves off as
+    Bastion sees them fixed, and the timeline.
   - **Repositories** — every git repo, its health, push guard and infected branches; check one, hunt its
     history, check its dependencies or add the Team PR guard from the **⋯** menu.
   - **Activity** — everything Bastion caught, blocked or changed, by day.
-  - **Quarantine**, **AI agents** (MCP setup and the hard-guard) and **Settings** (auto-respond,
-    protections, the online malware check, your lists).
+  - **Quarantine**, **AI agents** (which agents are connected, one-click connect, the hard-guard) and **Settings**
+    (auto-respond, protections, the online malware check, your lists).
   - **⌘K** opens the command menu; **⌘1–7** jump between pages.
 
 <div align="center"><img src="assets/panel-preview.png" width="300" alt="Bastion menu-bar panel"/></div>
@@ -185,6 +191,7 @@ Once it's connected, your agent is told to check a repository before running `in
 | `bastion_check_path` | "Is it safe to run npm here?" — checks one project, usually in under a second |
 | `bastion_respond` | Investigates, contains what it can prove (with undo) and returns an incident report |
 | `bastion_incidents` · `bastion_incident` | Incident history and full reports |
+| `bastion_todos` | Everything that needs the user right now, with proof and the fix — agents show it, the user runs it |
 | `bastion_deps` · `bastion_history` | Checks a project's dependencies · hunts a repo's git history for planted payloads |
 | `bastion_status` | Is this Mac protected right now? |
 | `bastion_scan` | Sweeps every repo plus temp folders, processes and network |
@@ -217,6 +224,9 @@ on its own — commands still go through the agent's normal permission prompts.
 bastion status                  # is this Mac protected right now?
 bastion check                   # is it safe to run install/dev/build in this folder?
 bastion scan                    # scan all your git repos (--full scans your whole home folder)
+bastion todos                   # what needs you right now, with proof and the fix for each
+bastion fix <id>                # run an item's fix (--yes for anything that changes GitHub or deletes)
+bastion next                    # setup that's still open · bastion agents: which AI agents are connected
 bastion respond                 # investigate and contain an attack (--plan: investigate only)
 bastion incidents               # incident history · incident [id] shows the report
 bastion undo [id]               # put back files Bastion cleaned, if it got one wrong
@@ -226,6 +236,8 @@ bastion deps                    # check this project's dependencies (osv on: als
 bastion history                 # hunt every branch, the reflog and deleted branches for payloads
 bastion branches                # local and pushed branches whose configs are infected
 bastion hooks install claude    # hard-guard Claude Code (or cursor, all)
+bastion connect cursor --write  # add Bastion to Cursor's MCP config (also claude_desktop, windsurf, codex)
+bastion enable git-guard --husky ~/code/app   # add the push check to a husky repo's .husky/pre-push
 bastion ci-setup --write        # add the Team PR guard workflow to this repo
 bastion activity                # what Bastion caught or changed recently
 bastion enable watcher          # or schedule, exec-guard, git-guard, auto-respond; "disable" turns one off
