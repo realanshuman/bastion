@@ -18,7 +18,7 @@
 <link rel="apple-touch-icon" href="assets/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300..700&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
 <style>
   :root {
     color-scheme: light;
@@ -32,6 +32,7 @@
     --green-soft: #e4f5eb;
     --red: #e5484d;
     --red-soft: #fdeceb;
+    --display: "Inter", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --gutter: clamp(16px, 4vw, 32px);
@@ -65,10 +66,12 @@
   .btn.sm { height: 36px; padding-inline: 16px; font-size: 14px; }
 
   /* type */
-  h1, h2, h3 { margin: 0; letter-spacing: -0.03em; text-wrap: balance; }
-  h1 { font-size: clamp(2.5rem, 6vw, 4.25rem); line-height: 1.02; font-weight: 600; }
-  h2 { font-size: clamp(2rem, 4vw, 3rem); line-height: 1.06; font-weight: 600; }
-  h3 { font-size: 1.15rem; line-height: 1.3; font-weight: 600; letter-spacing: -0.015em; }
+  h1, h2, h3 { margin: 0; text-wrap: balance; }
+  /* display type like the reference: a regular-weight grotesque (Inter Display at large sizes), tight tracking */
+  h1, h2 { font-family: var(--display); font-optical-sizing: auto; font-weight: 420; }
+  h1 { font-size: clamp(2.6rem, 6vw, 4.4rem); line-height: 1.04; letter-spacing: -0.03em; }
+  h2 { font-size: clamp(2.05rem, 4vw, 3.1rem); line-height: 1.08; letter-spacing: -0.028em; }
+  h3 { font-size: 1.12rem; line-height: 1.3; font-weight: 600; letter-spacing: -0.012em; }
   p { margin: 0; }
   .sub { color: var(--muted); font-size: clamp(1.05rem, 1.6vw, 1.25rem); max-width: 36em; text-wrap: pretty; }
   .center { text-align: center; }
