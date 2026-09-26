@@ -8,6 +8,8 @@
 
 A macOS app, a command-line tool and an MCP server for your AI coding agent, in one download.
 
+**[Website](https://bastion-neon.vercel.app)** · **[Download for macOS](https://github.com/realanshuman/bastion/releases/latest)**
+
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-6-orange)
 ![MCP](https://img.shields.io/badge/MCP-server-8A2BE2)
