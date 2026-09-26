@@ -102,8 +102,8 @@ beside it. Light, dark, or the same as your Mac.
 
 - **Home** is the agent. It says how things stand in one sentence ("Your code is clean", "2 old branches carry
   hidden malware"), then lets you ask in plain words: *Is my-app safe?*, *What needs me?*, *What happened
-  today?*, *What does dormant mean?* Answers come with the next step as a button. Below that: what needs you,
-  recent activity, protection and the setup checklist.
+  today?*, *What does dormant mean?* Answers come with the next step as a button. Below that: a three-step
+  **Get started** guide until it's done, then what needs you, recent activity and protection.
 - **Incidents → Needs you** is the live list: every threat, infected branch and open step, grouped by repo, each
   with how dangerous it is right now, the proof and a fix button. Anything that changes GitHub asks first.
 - **Incidents → All incidents**: each one reads as a short story. In short, what's left for you, what Bastion did,
@@ -116,7 +116,10 @@ beside it. Light, dark, or the same as your Mac.
   helps you, with each one's live status and a button to turn it on.
 - **One status everywhere**: *All clear*, *N to clean up* (nothing is running) or *Act now*, the same in the
   window, the menu-bar panel and the menu-bar icon.
-- Keyboard: **⌘K** search or ask, **⌘1–7** pages, **⌘[** and **⌘]** back and forward, **⌘R** refresh.
+- **It never says clean when it can't know.** Before the first scan it says *Not checked yet*. When the last scan
+  is more than 3 days old it says how old. If its engine is missing it says *Bastion isn't running* and offers
+  **Repair**, which puts the engine back from the copy inside the app.
+- Keyboard: **⌘K** search or ask, **⌘1–8** pages, **⌘[** and **⌘]** back and forward, **⌘R** refresh.
 
 ## Ask Bastion
 

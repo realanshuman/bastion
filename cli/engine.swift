@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "5.0.0"
+let VERSION = "5.1.0"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -95,7 +95,45 @@ func descendants(of root: pid_t) -> [pid_t] {
 
 // MARK: - JSON and time
 
+/// Text written before Bastion 5.1 used long dashes (U+2014) between clauses. Everything shown is cleaned up the same
+/// way: a spaced dash before a lowercase word ends the sentence ("x, dash, nothing" reads "x. Nothing"), any other
+/// spaced dash becomes a colon and a bare one a comma.
+func plainText(_ s: String) -> String {
+    guard s.contains("\u{2014}") else { return s }
+    var out = "", chars = Array(s), i = 0
+    while i < chars.count {
+        if chars[i] == "\u{2014}" {
+            let spaced = i > 0 && chars[i - 1] == " " && i + 1 < chars.count && chars[i + 1] == " "
+            if spaced {
+                if out.hasSuffix(" ") { out.removeLast() }
+                let next = i + 2 < chars.count ? chars[i + 2] : " "
+                if next.isLowercase { out += ". " + String(next).uppercased(); i += 3; continue }
+                out += ": "; i += 2; continue
+            }
+            out += ", "; i += 1; continue
+        }
+        out.append(chars[i]); i += 1
+    }
+    return out
+}
+
+/// plainText for every string in a JSON value
+/// plainText over every sentence in a JSON value. Paths and commands are left exactly as they are.
+func plainJSON(_ v: Any) -> Any {
+    if let s = v as? String { return s.hasPrefix("/") || s.hasPrefix("~") ? s : plainText(s) }
+    if let d = v as? [String: Any] {
+        var out = d
+        for (k, x) in d where !exactKeys.contains(k) { out[k] = plainJSON(x) }
+        return out
+    }
+    if let a = v as? [Any] { return a.map(plainJSON) }
+    return v
+}
+private let exactKeys: Set<String> = ["path", "repo", "log", "from", "to", "file", "files", "commands", "command", "args", "ref", "refs",
+                                      "branch", "original_path", "stored_at", "report", "hash", "sha", "id"]
+
 func jsonText(_ obj: Any, pretty: Bool = false) -> String {
+    let obj = plainJSON(obj)
     var o: JSONSerialization.WritingOptions = [.sortedKeys, .withoutEscapingSlashes]
     if pretty { o.insert(.prettyPrinted) }
     guard JSONSerialization.isValidJSONObject(obj),
@@ -440,6 +478,7 @@ func activity(limit: Int) -> [[String: Any]] {
             e["type"] = "scan"; e["quarantined"] = Int(message[q]) ?? 0; e["attention"] = Int(message[n]) ?? 0; e["log"] = String(message[l])
         }
         if let r = message.range(of: #"^INCIDENT INC-[0-9-]+"#, options: .regularExpression) { e["incident"] = String(message[r].dropFirst(9)) }
+        e["message"] = plainText(message)   // lines written before 5.1 can carry em dashes
         e["said"] = sayEvent(e)
         return e
     }
@@ -503,6 +542,10 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
         if let t = last["time"] { ls["time"] = t }
         out["last_scan"] = ls
     } else { out["last_scan"] = NSNull() }
+    // never · stale (older than 3 days) · recent: so nobody reads "all clear" as "checked and clean" when it wasn't
+    let age = (last?["time"]).flatMap(parseISO).map { Date().timeIntervalSince($0) / 3600 }
+    out["checked"] = age == nil ? "never" : age! > 72 ? "stale" : "recent"
+    if let age { out["last_scan_age_hours"] = Int(age) }
     if includeRepos {
         out["git_guard"] = ["repos": rs.repos.count,
                             "protected": rs.states.filter { $0 == "protected" }.count,
@@ -512,7 +555,8 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     }
     var summary = threats.isEmpty ? "Protected." : "\(threats.count) active threat\(threats.count == 1 ? "" : "s"). See active_threats[].remediation."
     if threats.isEmpty && !(protection["watcher"] as? Bool ?? false) { summary += " The real-time watcher is off (bastion_enable watcher turns it on)." }
-    if last == nil { summary += " No scan has run yet." }
+    if last == nil { summary += " No scan has run yet, so nothing has been checked. Run bastion_scan." }
+    else if let age, age > 72 { summary += " The last scan was \(Int(age / 24)) days ago." }
     out["autonomy"] = autonomy()
     out["osv"] = osvEnabled()
     if let i = currentIncident() {

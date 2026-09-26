@@ -91,15 +91,26 @@ extension AppStore {
 
 // MARK: - How things stand, in Bastion's words
 
-struct AgentBrief { let label: String; let when: String?; let headline: String; let detail: String; let tint: Color; let working: Bool }
+struct AgentBrief {
+    let label: String; let when: String?; let headline: String; let detail: String; let tint: Color; let working: Bool
+    var cta: [(title: String, primary: Bool, run: () -> Void)] = []
+}
 
 @MainActor func agentBrief(_ store: AppStore) -> AgentBrief {
     let g = store.status["git_guard"] as? JSON ?? [:]
     let repos = g["repos"] as? Int ?? store.repos.count
     let plural = repos == 1 ? "repository" : "repositories"
     let when = agoWords((store.status["last_scan"] as? JSON)?["time"]).map { "Last check \($0)" } ?? "No scan yet"
-    if !store.loaded {
-        return AgentBrief(label: "Starting", when: nil, headline: "Getting ready", detail: "Reading what I know about this Mac.", tint: DT.dim, working: true)
+    if !store.loaded || store.bootstrapping {
+        return AgentBrief(label: "Starting", when: nil, headline: "Getting ready",
+                          detail: store.bootstrapping ? "Setting up Bastion's engine on this Mac. This takes a moment." : "Reading what I know about this Mac.",
+                          tint: DT.dim, working: true)
+    }
+    if store.engineMissing {
+        return AgentBrief(label: "Not running", when: nil, headline: "Bastion isn't running",
+                          detail: "Its engine is missing or not responding, so nothing is being checked right now. Repair puts it back from the copy inside the app.",
+                          tint: DT.red, working: store.busy.contains("repair"),
+                          cta: [(store.busy.contains("repair") ? "Repairing" : "Repair", true, { store.repair() })])
     }
     if store.busy.contains("scan") {
         return AgentBrief(label: "Scanning", when: nil, headline: "Checking \(repos) \(plural)",
@@ -133,6 +144,20 @@ struct AgentBrief { let label: String; let when: String?; let headline: String; 
         return AgentBrief(label: "\(n) to clean up", when: when, headline: "\(n) thing\(n == 1 ? "" : "s") need\(n == 1 ? "s" : "") you",
                           detail: "Nothing is running. Each one below comes with the proof and a one-click fix.", tint: DT.orange, working: false)
     default:
+        if store.neverScanned {
+            return AgentBrief(label: "Not checked yet", when: nil, headline: "Let's check your code",
+                              detail: repos == 0 ? "I haven't found a git repository in your home folder yet. A scan looks again, and takes a few seconds."
+                                                 : "I haven't looked at your \(repos) \(plural) yet. The first scan takes a few seconds, and it changes nothing without you.",
+                              tint: DT.ink, working: false, cta: [("Run your first scan", true, { store.scan() })])
+        }
+        if let days = store.staleDays {
+            let scheduleOff = store.protection["scheduled_scan"] as? Bool != true
+            var cta: [(title: String, primary: Bool, run: () -> Void)] = [("Scan now", true, { store.scan() })]
+            if scheduleOff { cta.append(("Scan every 6 hours", false, { store.setFeature("scheduled_scan", title: "scheduled scan", on: true) })) }
+            return AgentBrief(label: "Out of date", when: nil, headline: "Last checked \(days) days ago",
+                              detail: "Your code was clean then, but I haven't looked since." + (scheduleOff ? " Scan now, and let me scan on a schedule so this stays current." : " Scan now to be sure it still is."),
+                              tint: DT.orange, working: false, cta: cta)
+        }
         return AgentBrief(label: "All clear", when: when, headline: "Your code is clean",
                           detail: "Watching \(repos) \(plural). Nothing needs you right now.", tint: DT.green, working: false)
     }
@@ -160,8 +185,10 @@ struct HomePage: View {
                     if !store.chat.isEmpty {
                         Button("Clear answers") { withAnimation(.easeOut(duration: 0.2)) { store.chat.removeAll() } }.buttonStyle(GhostButton())
                     }
-                    Button { store.scan() } label: { Label(store.busy.contains("scan") ? "Scanning" : "Scan now", systemImage: "magnifyingglass") }
-                        .buttonStyle(PrimaryButton()).disabled(store.busy.contains("scan"))
+                    if !store.engineMissing && agentBrief(store).cta.isEmpty {   // otherwise the headline has the button
+                        Button { store.scan() } label: { Label(store.busy.contains("scan") ? "Scanning" : "Scan now", systemImage: "magnifyingglass") }
+                            .buttonStyle(PrimaryButton()).disabled(store.busy.contains("scan"))
+                    }
                 }
             }
             GeometryReader { geo in
@@ -169,12 +196,14 @@ struct HomePage: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 36) {
                             StatusHeader(store: store)
-                            VStack(alignment: .leading, spacing: 12) {
-                                AskBox(store: store)
-                                TryLine(store: store)
-                                if !store.chat.isEmpty { Conversation(store: store).padding(.top, 12) }
+                            if !store.engineMissing {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    AskBox(store: store)
+                                    TryLine(store: store)
+                                    if !store.chat.isEmpty { Conversation(store: store).padding(.top, 12) }
+                                }
+                                HomeSections(store: store, wide: geo.size.width > 900)
                             }
-                            HomeSections(store: store, wide: geo.size.width > 900)
                         }
                         .padding(.horizontal, 40).padding(.top, 36).padding(.bottom, 44)
                         .frame(maxWidth: 960, alignment: .leading).frame(maxWidth: .infinity)
@@ -207,6 +236,15 @@ struct StatusHeader: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(b.detail).font(uiFont(15)).foregroundStyle(DT.dim).lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true).frame(maxWidth: 620, alignment: .leading)
+                if !b.cta.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(Array(b.cta.enumerated()), id: \.offset) { _, c in
+                            Button(c.title, action: c.run)
+                                .buttonStyle(c.primary ? AnyButtonStyle(PrimaryButton(tint: b.tint == DT.red ? DT.red : nil, large: true)) : AnyButtonStyle(SecondaryButton(large: true)))
+                                .disabled(store.busy.contains("repair") || store.busy.contains("scan"))
+                        }
+                    }.padding(.top, 10)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -229,7 +267,7 @@ struct AskBox: View {
                 Button(action: send) {
                     Image(systemName: "arrow.up").font(.system(size: 12, weight: .bold)).foregroundStyle(DT.onInk)
                         .frame(width: 26, height: 26).background(DT.ink, in: Circle())
-                }.buttonStyle(.plain).help("Ask")
+                }.buttonStyle(.plain).help("Ask").accessibilityLabel("Ask")
             }
         }
         .padding(.leading, 14).padding(.trailing, 10).frame(height: 46)
@@ -260,7 +298,7 @@ struct TryLine: View {
     }
     private func row(_ items: [String]) -> some View {
         HStack(spacing: 8) {
-            Text("Try").font(uiFont(12)).foregroundStyle(DT.faint)
+            Text("Try").font(uiFont(12)).foregroundStyle(DT.dim)
             ForEach(Array(items.enumerated()), id: \.offset) { i, q in
                 if i > 0 { Text("·").font(uiFont(12)).foregroundStyle(DT.faint) }
                 TextLink(text: q) { store.askBastion(q) }
@@ -371,7 +409,7 @@ struct ExchangeView: View {
         }
         if latest, let s = a["suggestions"] as? [String], !s.isEmpty {
             HStack(spacing: 8) {
-                Text("Next").font(uiFont(12)).foregroundStyle(DT.faint)
+                Text("Next").font(uiFont(12)).foregroundStyle(DT.dim)
                 ForEach(Array(s.prefix(3).enumerated()), id: \.offset) { i, q in
                     if i > 0 { Text("·").font(uiFont(12)).foregroundStyle(DT.faint) }
                     TextLink(text: q) { store.askBastion(q) }
@@ -412,11 +450,77 @@ struct Thinking: View {
 
 // MARK: - Sections
 
+/// The first three things to do, until they're done or hidden
+struct GetStarted: View {
+    @ObservedObject var store: AppStore
+    @MainActor static func visible(_ store: AppStore) -> Bool {
+        guard store.loaded, !store.engineMissing, !store.hideGetStarted else { return false }
+        let installed = store.agents.filter { $0["installed"] as? Bool == true }
+        let agentDone = installed.isEmpty || installed.contains { $0["connected"] as? Bool == true }
+        return !(store.lastScanDate != nil && store.bulkSteps.isEmpty && agentDone)
+    }
+    var body: some View {
+        let scanned = store.lastScanDate != nil
+        let bulk = store.bulkSteps
+        let installed = store.agents.filter { $0["installed"] as? Bool == true }
+        let connected = installed.contains { $0["connected"] as? Bool == true }
+        let agentDone = connected || installed.isEmpty
+        let done = [scanned, bulk.isEmpty, agentDone].filter { $0 }.count
+        PageSection(title: "Get started", count: "\(done) of 3") {
+            Button("Hide") { withAnimation(.easeOut(duration: 0.2)) { store.hideGetStarted = true } }.buttonStyle(GhostButton())
+        } content: {
+            RowGroup {
+                step(1, "Check your code", done: scanned,
+                     text: scanned ? "Done. The last scan was \(agoWords((store.status["last_scan"] as? JSON)?["time"]) ?? "recent")."
+                                   : "One scan looks through every repository in your home folder. It takes a few seconds.",
+                     button: scanned || store.neverScanned ? nil : (store.busy.contains("scan") ? "Scanning" : "Scan now", { store.scan() }))
+                Hairline()
+                step(2, "Turn on protection", done: bulk.isEmpty,
+                     text: bulk.isEmpty ? "Done. Everything that can run in the background is on."
+                                        : "The watcher, the scheduled scan, the execution guard and the push guard. One click turns on the \(bulk.count) that are off.",
+                     button: bulk.isEmpty ? nil : (store.busy.contains("steps") ? "Turning on" : "Turn on \(bulk.count)", { store.doRecommended() }))
+                Hairline()
+                step(3, "Connect your AI agent", done: agentDone,
+                     text: connected ? "Done. Your agent checks with Bastion before it runs npm."
+                         : installed.isEmpty ? "No coding agent found on this Mac. You can connect one later from AI agents."
+                         : "So Claude Code, Cursor or Codex checks a repository with Bastion before running npm in it.",
+                     button: agentDone ? nil : ("Connect", { Router.shared.go(.agents) }))
+            }
+        }
+    }
+    private func step(_ n: Int, _ title: String, done: Bool, text: String, button: (String, () -> Void)?) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle().fill(done ? DT.green : DT.surface2).frame(width: 24, height: 24)
+                if done { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white) }
+                else { Text("\(n)").font(uiFont(12, .semibold)).foregroundStyle(DT.text2) }
+            }.accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(uiFont(13, .semibold)).foregroundStyle(done ? DT.dim : DT.text)
+                Text(text).font(uiFont(12)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if let button { Button(button.0, action: button.1).buttonStyle(n == 1 ? AnyButtonStyle(PrimaryButton()) : AnyButtonStyle(SecondaryButton())) }
+        }
+        .padding(16)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Step \(n), \(title)\(done ? ", done" : "")")
+    }
+}
+
 struct HomeSections: View {
     @ObservedObject var store: AppStore
     let wide: Bool
     var body: some View {
-        let setupOpen = store.steps.contains { $0["done"] as? Bool != true && $0["optional"] as? Bool != true }
+        let gettingStarted = GetStarted.visible(store)
+        let urgentFirst = store.needsYouCount > 0
+        let setupOpen = !gettingStarted && store.steps.contains { $0["done"] as? Bool != true && $0["optional"] as? Bool != true }
+        if gettingStarted && !urgentFirst { GetStarted(store: store) }
+        sections(setupOpen)
+        if gettingStarted && urgentFirst { GetStarted(store: store) }
+    }
+
+    @ViewBuilder private func sections(_ setupOpen: Bool) -> some View {
         if wide {
             HStack(alignment: .top, spacing: 32) {
                 VStack(alignment: .leading, spacing: 36) {
@@ -448,12 +552,14 @@ struct NeedsSection: View {
         } content: {
             RowGroup {
                 if items.isEmpty {
+                    let unchecked = store.neverScanned
                     HStack(spacing: 12) {
-                        Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(DT.green)
-                            .frame(width: 28, height: 28).background(DT.green.opacity(0.11), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        Image(systemName: unchecked ? "minus" : "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(unchecked ? DT.dim : DT.green)
+                            .frame(width: 28, height: 28).background((unchecked ? DT.dim : DT.green).opacity(0.11), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Nothing needs you right now").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
-                            Text("When something does, it shows up here and in the menu bar.").font(uiFont(12)).foregroundStyle(DT.dim)
+                            Text(unchecked ? "Nothing checked yet" : "Nothing needs you right now").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
+                            Text(unchecked ? "After the first scan, anything that needs you shows up here and in the menu bar."
+                                           : "When something does, it shows up here and in the menu bar.").font(uiFont(12)).foregroundStyle(DT.dim)
                         }
                         Spacer(minLength: 0)
                     }.padding(16)

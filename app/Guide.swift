@@ -199,7 +199,7 @@ struct GuidePage: View {
                            why: "Get anywhere in a couple of keystrokes.",
                            action: ("Try it", { withAnimation(.easeOut(duration: 0.12)) { Router.shared.palette = true } }))
                 DocFeature(icon: "terminal", title: "Command line",
-                           what: "Everything the app does also works in a terminal: bastion check, bastion scan, bastion todos and bastion fix.",
+                           what: "Everything the app does also works in a terminal: bastion check, bastion scan, bastion todos and bastion fix. The command lives in ~/.security-guard/bin.",
                            why: "Check a project before you install it, or use Bastion in your own scripts.")
             }
         }
@@ -350,7 +350,7 @@ struct OnThisPage: View {
     let go: (String) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("On this page").font(uiFont(11, .medium)).foregroundStyle(DT.faint).padding(.leading, 12).padding(.bottom, 8)
+            Text("On this page").font(uiFont(11, .medium)).foregroundStyle(DT.dim).padding(.leading, 12).padding(.bottom, 8)
             ForEach(GuidePage.toc, id: \.id) { s in
                 TocItem(title: s.title, on: s.id == active) { go(s.id) }
             }
@@ -403,7 +403,7 @@ struct StepStrip: View {
                 Image(systemName: s.0).font(.system(size: 12, weight: .semibold)).foregroundStyle(DT.text)
                     .frame(width: 26, height: 26).background(DT.surface2, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 Spacer()
-                Text(String(format: "%02d", i + 1)).font(codeFont(11, .medium)).foregroundStyle(DT.faint)
+                Text(String(format: "%02d", i + 1)).font(codeFont(11, .medium)).foregroundStyle(DT.dim)
             }
             Text(s.1).font(uiFont(15, .semibold)).foregroundStyle(DT.text).padding(.top, 2)
             Text(s.2).font(uiFont(12)).foregroundStyle(DT.dim).lineSpacing(1.5).fixedSize(horizontal: false, vertical: true)

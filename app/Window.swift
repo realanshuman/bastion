@@ -49,6 +49,13 @@ func parseDate(_ any: Any?) -> Date? {
     return nil
 }
 
+/// "09:13", for rows under a day heading
+func clockTime(_ any: Any?) -> String {
+    guard let d = parseDate(any) else { return "" }
+    let o = DateFormatter(); o.dateFormat = "HH:mm"
+    return o.string(from: d)
+}
+
 func shortTime(_ any: Any?) -> String {
     guard let d = parseDate(any) else { return "" }
     let o = DateFormatter(); o.dateFormat = Calendar.current.isDateInToday(d) ? "'Today' HH:mm" : "MMM d, HH:mm"
@@ -218,6 +225,41 @@ final class AppStore: ObservableObject {
     @Published var agents: [JSON] = []         // which AI agents are connected (bastion agents)
     @Published var chat: [Exchange] = []       // questions and answers on Home
     @Published var sampleRepo: String?         // a repo to use in example questions
+    @Published var hideGetStarted = UserDefaults.standard.bool(forKey: "hideGetStarted") {
+        didSet { UserDefaults.standard.set(hideGetStarted, forKey: "hideGetStarted") }
+    }
+
+    /// True while the app installs or updates the engine on first launch, so "not running" never flashes up meanwhile
+    @Published var bootstrapping = false
+
+    /// The engine didn't answer. Nothing is being checked, and the app must never call that "clean".
+    var engineMissing: Bool { loaded && !bootstrapping && status["version"] == nil }
+    var lastScanDate: Date? { parseDate((status["last_scan"] as? JSON)?["time"]) }
+    /// Installed and running, but no scan yet: "clean" would be a guess
+    var neverScanned: Bool { loaded && !engineMissing && lastScanDate == nil }
+    /// Whole days since the last scan, once that's more than 3 days
+    var staleDays: Int? {
+        guard let d = lastScanDate, Date().timeIntervalSince(d) > 3 * 86400 else { return nil }
+        return Int(Date().timeIntervalSince(d) / 86400)
+    }
+
+    /// Puts the engine back from the copy inside the app (the same step the app runs on first launch), then checks again.
+    func repair() {
+        let helper = Bundle.main.bundlePath + "/Contents/Helpers/bastion"
+        guard FileManager.default.isExecutableFile(atPath: helper) else {
+            flash("This copy of Bastion can't repair itself. Download it again from the website.")
+            return
+        }
+        busy.insert("repair")
+        Task {
+            let r = await Task.detached(priority: .userInitiated) { () -> Box in
+                Box(json: (try? JSONSerialization.jsonObject(with: Data(runTool(helper, ["bootstrap", "--json"]).utf8)) as? JSON) ?? [:])
+            }.value.json
+            busy.remove("repair")
+            flash(r["ok"] as? Bool == true ? "Bastion's engine is back. Checking again." : "Couldn't repair it. Download Bastion again from the website.")
+            refresh()
+        }
+    }
 
     /// One with something on it, else the one used most recently
     static func pickSample(_ repos: [JSON]) -> String? {
@@ -571,7 +613,9 @@ struct Sidebar: View {
             HStack {
                 AppearanceSwitch()
                 Spacer()
-                Text("v\(store.status["version"] as? String ?? "")").font(uiFont(11)).foregroundStyle(DT.faint)
+                if let v = store.status["version"] as? String ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+                    Text("v" + v).font(uiFont(11)).foregroundStyle(DT.dim)
+                }
             }.padding(.horizontal, 4).padding(.top, 12).padding(.bottom, 12)
         }
         .padding(.horizontal, 10)
@@ -594,7 +638,7 @@ struct Sidebar: View {
     }
 
     private func header(_ title: String) -> some View {
-        Text(title).font(uiFont(11, .medium)).foregroundStyle(DT.faint)
+        Text(title).font(uiFont(11, .medium)).foregroundStyle(DT.dim)
             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.top, 18).padding(.bottom, 6)
     }
 
@@ -603,7 +647,12 @@ struct Sidebar: View {
         let setup = store.status["setup"] as? JSON ?? [:]
         let done = setup["done"] as? Int ?? 0, total = setup["total"] as? Int ?? 0
         let n = store.needsYouCount
-        if n > 0 {
+        if router.pane == .home {
+            EmptyView()   // Home says the same thing, bigger
+        } else if store.engineMissing {
+            SideCallout(icon: "exclamationmark.octagon.fill", tint: DT.red, title: "Bastion isn't running",
+                        text: "Nothing is being checked right now.", button: store.busy.contains("repair") ? "Repairing" : "Repair") { store.repair() }
+        } else if n > 0 {
             let now = store.state == "act_now"
             SideCallout(icon: now ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill", tint: now ? DT.red : DT.orange,
                         title: now ? "Act now" : "\(n) thing\(n == 1 ? "" : "s") to clean up",
@@ -855,7 +904,7 @@ struct ActivityRow: View {
                 .frame(width: 24, height: 24).background(s.icon == "circle.fill" ? .clear : s.tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             Text(message).font(uiFont(13)).foregroundStyle(DT.text).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 12)
-            Text(shortTime(event["time"])).font(uiFont(12)).foregroundStyle(DT.faint).monospacedDigit()
+            Text(clockTime(event["time"])).font(uiFont(12)).foregroundStyle(DT.dim).monospacedDigit()
             if chevron { Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(DT.faint) }
         }.padding(.horizontal, 16).frame(height: 44).contentShape(Rectangle()).help(message)
     }
@@ -876,7 +925,7 @@ struct IncidentsPage: View {
                 Segmented(items: [("needs", "Needs you", store.needsYouCount), ("all", "All incidents", store.incidents.count)], selection: $router.incidentsTab)
                 Spacer()
                 Text(router.incidentsTab == "needs" ? "Updates on its own. Fixed items leave the list." : "Every attack Bastion handled, newest first.")
-                    .font(uiFont(12)).foregroundStyle(DT.faint)
+                    .font(uiFont(12)).foregroundStyle(DT.dim)
             }.padding(.horizontal, 20).frame(height: 52)
             Hairline()
             if router.incidentsTab == "needs" { NeedsYouList(store: store) } else { IncidentList(store: store) }
@@ -930,7 +979,7 @@ struct IncidentRow: View {
                 StatusIcon(status: status)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(withoutTodoCount(inc["summary"])).font(uiFont(13, .medium)).foregroundStyle(DT.text).lineLimit(1)
-                    Text("\(inc["id"] as? String ?? "") · opened \(shortTime(inc["opened"]))").font(uiFont(12)).foregroundStyle(DT.faint)
+                    Text("\(inc["id"] as? String ?? "") · opened \(shortTime(inc["opened"]))").font(uiFont(12)).foregroundStyle(DT.dim)
                 }
                 Spacer(minLength: 12)
                 ForEach(Array(repos.prefix(2).enumerated()), id: \.offset) { _, r in Pill(text: r, icon: "folder") }
@@ -961,7 +1010,7 @@ struct NeedsYouList: View {
                             HStack(spacing: 8) {
                                 Image(systemName: g.0.isEmpty ? "desktopcomputer" : "folder").font(.system(size: 12, weight: .medium)).foregroundStyle(DT.dim)
                                 Text(g.0.isEmpty ? "This Mac" : (g.0 as NSString).lastPathComponent).font(uiFont(13, .semibold)).foregroundStyle(DT.text)
-                                if !g.0.isEmpty { Text(tildePath(g.0)).font(codeFont(12)).foregroundStyle(DT.faint).lineLimit(1).truncationMode(.middle) }
+                                if !g.0.isEmpty { Text(tildePath(g.0)).font(codeFont(12)).foregroundStyle(DT.dim).lineLimit(1).truncationMode(.middle) }
                                 Spacer()
                             }.padding(.leading, 2)
                             ForEach(g.1.indices, id: \.self) { i in TodoCard(store: store, item: g.1[i]) }
@@ -1254,7 +1303,7 @@ struct IncidentStory: View {
         return HStack(alignment: .top, spacing: 12) {
             Button { if !key.hasPrefix("branch:"), let id = inc["id"] as? String { store.tick(id, key) } } label: {
                 Circle().strokeBorder(DT.dim, lineWidth: 1.5).frame(width: 16, height: 16)
-            }.buttonStyle(.plain).padding(.top, 1)
+            }.buttonStyle(.plain).padding(.top, 1).accessibilityLabel("Mark done")
                 .help(key.hasPrefix("branch:") ? "Ticks itself once Bastion sees the branch fixed" : "Mark done")
             VStack(alignment: .leading, spacing: 6) {
                 Text(t["title"] as? String ?? "").font(uiFont(13, .semibold)).foregroundStyle(DT.text).fixedSize(horizontal: false, vertical: true)
@@ -1327,7 +1376,7 @@ struct IncidentStory: View {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 12)).foregroundStyle(DT.orange)
                 Text(b["ref"] as? String ?? "").font(codeFont(13, .medium)).foregroundStyle(DT.text).textSelection(.enabled)
-                Text(tildePath(b["repo"] as? String ?? "")).font(uiFont(12)).foregroundStyle(DT.faint)
+                Text(tildePath(b["repo"] as? String ?? "")).font(uiFont(12)).foregroundStyle(DT.dim)
                 Spacer()
                 if let d = b["default_branch"] as? String, b["default_clean"] as? Bool == true { Tag(text: "\(d) is clean", tint: DT.green) }
             }
@@ -1354,7 +1403,7 @@ struct IncidentStory: View {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text").font(.system(size: 12)).foregroundStyle(DT.red)
                 Text(f["rel"] as? String ?? "").font(codeFont(13, .medium)).foregroundStyle(DT.text).textSelection(.enabled)
-                Text(tildePath(repo)).font(uiFont(12)).foregroundStyle(DT.faint)
+                Text(tildePath(repo)).font(uiFont(12)).foregroundStyle(DT.dim)
                 Spacer()
                 if let a = f["action"] as? String { Tag(text: a == "restored" ? "Cleaned" : "Needs you", tint: a == "restored" ? DT.accent : DT.orange) }
             }
@@ -1380,7 +1429,7 @@ struct IncidentStory: View {
             if let proof = f["evidence_text"] as? String, !proof.isEmpty {
                 codeBox(proof)
             } else {
-                Text("Payload signs: \(f["detail"] as? String ?? "")").font(codeFont(12)).foregroundStyle(DT.faint)
+                Text("Payload signs: \(f["detail"] as? String ?? "")").font(codeFont(12)).foregroundStyle(DT.dim)
             }
         }
     }
@@ -1395,8 +1444,8 @@ struct IncidentStory: View {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(DT.green)
                         Text(done[i]["title"] as? String ?? "").font(uiFont(13)).foregroundStyle(DT.dim).strikethrough(true, color: DT.faint)
                         Spacer()
-                        Text(done[i]["how"] as? String == "ticked" ? "Marked done" : "Fixed and checked").font(uiFont(12)).foregroundStyle(DT.faint)
-                        Text(ago(done[i]["time"])).font(uiFont(12)).foregroundStyle(DT.faint).monospacedDigit()
+                        Text(done[i]["how"] as? String == "ticked" ? "Marked done" : "Fixed and checked").font(uiFont(12)).foregroundStyle(DT.dim)
+                        Text(ago(done[i]["time"])).font(uiFont(12)).foregroundStyle(DT.dim).monospacedDigit()
                     }.padding(.horizontal, 16).frame(height: 44)
                 }
             }
@@ -1450,7 +1499,7 @@ struct IncidentStory: View {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array((inc["timeline"] as? [JSON] ?? []).enumerated()), id: \.offset) { _, e in
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(shortTime(e["time"])).font(uiFont(12)).foregroundStyle(DT.faint).monospacedDigit().frame(width: 96, alignment: .leading)
+                        Text(shortTime(e["time"])).font(uiFont(12)).foregroundStyle(DT.dim).monospacedDigit().frame(width: 96, alignment: .leading)
                         Text(e["event"] as? String ?? "").font(uiFont(13)).foregroundStyle(DT.text2).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1557,7 +1606,7 @@ struct ReposPage: View {
                 .frame(width: 28, height: 26)
                 .background(layout == id ? DT.panel : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain).help(id == "grid" ? "Cards" : "List")
+        }.buttonStyle(.plain).help(id == "grid" ? "Cards" : "List").accessibilityLabel(id == "grid" ? "Show as cards" : "Show as a list")
     }
 }
 
@@ -1625,6 +1674,7 @@ struct RepoMenu: View {
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
         } label: { Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold)).foregroundStyle(DT.dim).frame(width: 26, height: 26) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .accessibilityLabel("More for \(name)")
     }
 }
 
@@ -1645,7 +1695,7 @@ struct RepoCard: View {
                     .frame(width: 32, height: 32).background(DT.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name).font(uiFont(13, .semibold)).foregroundStyle(DT.text).lineLimit(1)
-                    Text(tildePath(path)).font(codeFont(11)).foregroundStyle(DT.faint).lineLimit(1).truncationMode(.middle)
+                    Text(tildePath(path)).font(codeFont(11)).foregroundStyle(DT.dim).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 4)
                 Image(systemName: health.icon).font(.system(size: 14)).foregroundStyle(health.tint).help(health.help)
@@ -1683,7 +1733,7 @@ struct RepoRow: View {
             Image(systemName: health.icon).font(.system(size: 13)).foregroundStyle(health.tint).frame(width: 18).help(health.help)
             VStack(alignment: .leading, spacing: 2) {
                 Text(repo["name"] as? String ?? "").font(uiFont(13, .medium)).foregroundStyle(DT.text)
-                Text(tildePath(path)).font(codeFont(11)).foregroundStyle(DT.faint).lineLimit(1).truncationMode(.middle)
+                Text(tildePath(path)).font(codeFont(11)).foregroundStyle(DT.dim).lineLimit(1).truncationMode(.middle)
             }.frame(maxWidth: .infinity, alignment: .leading)
             Text(health.text).font(uiFont(12)).foregroundStyle(DT.text2).lineLimit(1).frame(width: 220, alignment: .leading).help(health.help)
             Text(repo["branch"] as? String ?? "").font(codeFont(12)).foregroundStyle(DT.text2).lineLimit(1).frame(width: 120, alignment: .leading)
@@ -1779,7 +1829,7 @@ struct QuarantinePage: View {
                 .frame(width: 28, height: 28).background(DT.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(tildePath(item["original_path"] as? String ?? item["stored_at"] as? String ?? "")).font(codeFont(12)).foregroundStyle(DT.text).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                Text("Batch \(item["id"] as? String ?? "") · \(shortTime(item["time"]))").font(uiFont(12)).foregroundStyle(DT.faint)
+                Text("Batch \(item["id"] as? String ?? "") · \(shortTime(item["time"]))").font(uiFont(12)).foregroundStyle(DT.dim)
             }
             Spacer()
             Tag(text: (item["reason"] as? String ?? "").replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " "), tint: DT.orange)
@@ -1841,7 +1891,7 @@ struct AgentsPage: View {
                     .filter { store.agents.isEmpty || installed.contains($0.0) }
                 PageSection(title: "Hard-guard", note: "A hook that stops an agent's install, dev, build or test command before it runs in an unsafe repo. Enforced, not just asked.") {
                     if guards.isEmpty {
-                        Text("Neither Claude Code nor Cursor is installed on this Mac.").font(uiFont(13)).foregroundStyle(DT.faint)
+                        Text("Neither Claude Code nor Cursor is installed on this Mac.").font(uiFont(13)).foregroundStyle(DT.dim)
                     } else {
                         RowGroup {
                             ForEach(guards.indices, id: \.self) { i in
@@ -2146,7 +2196,7 @@ struct CommandPalette: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(items.enumerated()), id: \.element.id) { i, c in
                                 if i == 0 || items[i - 1].group != c.group {
-                                    Text(c.group).font(uiFont(11, .medium)).foregroundStyle(DT.faint).padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+                                    Text(c.group).font(uiFont(11, .medium)).foregroundStyle(DT.dim).padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
                                 }
                                 Button { close(); c.run() } label: {
                                     HStack(spacing: 10) {
@@ -2157,7 +2207,7 @@ struct CommandPalette: View {
                                         Text(c.group == "Ask Bastion" ? "“\(c.title)”" : c.title).font(uiFont(13, c.group == "Ask Bastion" ? .medium : .regular)).foregroundStyle(DT.text).lineLimit(1)
                                         Spacer()
                                         if !c.hint.isEmpty {
-                                            if c.hint.hasPrefix("⌘") || c.hint == "↩" { KeyCap(key: c.hint) } else { Text(c.hint).font(codeFont(11)).foregroundStyle(DT.faint).lineLimit(1) }
+                                            if c.hint.hasPrefix("⌘") || c.hint == "↩" { KeyCap(key: c.hint) } else { Text(c.hint).font(codeFont(11)).foregroundStyle(DT.dim).lineLimit(1) }
                                         }
                                     }
                                     .padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
@@ -2245,6 +2295,9 @@ struct ResultSheet: View {
 struct StateLook { let title: String; let short: String; let detail: String; let tint: Color }
 
 @MainActor func stateLook(_ store: AppStore) -> StateLook {
+    if store.engineMissing {
+        return StateLook(title: "Bastion isn't running", short: "Not running", detail: "Its engine is missing or not responding.", tint: DT.red)
+    }
     let n = store.needsYouCount
     switch store.state {
     case "act_now":
@@ -2253,6 +2306,8 @@ struct StateLook { let title: String; let short: String; let detail: String; let
     case "clean_up":
         return StateLook(title: "\(n) thing\(n == 1 ? "" : "s") to clean up", short: "\(n) to clean up", detail: "Nothing is running.", tint: DT.orange)
     default:
+        if store.neverScanned { return StateLook(title: "Not checked yet", short: "Not checked", detail: "Run a first scan.", tint: DT.dim) }
+        if let d = store.staleDays { return StateLook(title: "Last checked \(d) days ago", short: "Out of date", detail: "Scan to be sure.", tint: DT.orange) }
         return StateLook(title: "All clear", short: "All clear", detail: "Nothing needs you.", tint: DT.green)
     }
 }

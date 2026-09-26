@@ -157,7 +157,9 @@ func agoText(_ d: Date?) -> String {
 }
 
 /// An activity line in Bastion's own words: "Scanned your repositories: all clean".
-func sayEvent(_ e: [String: Any]) -> String {
+func sayEvent(_ e: [String: Any]) -> String { plainText(sayEventRaw(e)) }
+
+private func sayEventRaw(_ e: [String: Any]) -> String {
     var m = (e["message"] as? String ?? "").replacingOccurrences(of: #"\s*\(/[^)]*\)\s*$"#, with: "", options: .regularExpression)
     func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
     switch e["type"] as? String ?? "" {

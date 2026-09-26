@@ -137,6 +137,15 @@ struct ThemeSwitch: ToggleStyle {
     }
 }
 
+/// A ring in the accent colour when a control has keyboard focus (Full Keyboard Access, Tab)
+struct FocusRing: ViewModifier {
+    var radius: CGFloat = 8
+    @Environment(\.isFocused) private var focused
+    func body(content: Content) -> some View {
+        content.overlay(RoundedRectangle(cornerRadius: radius + 3, style: .continuous).strokeBorder(DT.accent, lineWidth: 2).padding(-3).opacity(focused ? 1 : 0))
+    }
+}
+
 /// Ink by default (black on light, white on dark); a colour for danger. 28 tall, or 32 when large.
 struct PrimaryButton: ButtonStyle {
     var tint: Color? = nil
@@ -148,6 +157,7 @@ struct PrimaryButton: ButtonStyle {
             .background((tint ?? DT.ink).opacity(enabled ? (configuration.isPressed ? 0.78 : 1) : 0.35),
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
+            .modifier(FocusRing())
     }
 }
 
@@ -160,6 +170,7 @@ struct SecondaryButton: ButtonStyle {
             .background(configuration.isPressed ? DT.surface2 : DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
             .contentShape(Rectangle())
+            .modifier(FocusRing())
     }
 }
 
@@ -174,6 +185,7 @@ struct GhostButton: ButtonStyle {
                 .padding(.horizontal, 8).frame(height: 24)
                 .background(hover || configuration.isPressed ? DT.surface2 : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .contentShape(Rectangle()).onHover { hover = $0 }
+                .modifier(FocusRing(radius: 6))
         }
     }
 }
@@ -204,6 +216,7 @@ struct IconButton: View {
                 .frame(width: 26, height: 26)
                 .background(hover && enabled ? DT.surface2 : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }.buttonStyle(.plain).help(help).onHover { hover = $0 }.disabled(!enabled)
+        .accessibilityLabel(help.components(separatedBy: "  ").first ?? help)
     }
 }
 
@@ -335,7 +348,7 @@ struct CommandBlock: View {
             Button { copy() } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 11, weight: .medium))
                     .foregroundStyle(copied ? DT.green : DT.dim).frame(width: 22, height: 22)
-            }.buttonStyle(.plain).help("Copy")
+            }.buttonStyle(.plain).help("Copy").accessibilityLabel("Copy")
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
         .background(DT.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -447,7 +460,7 @@ struct AppearanceSwitch: View {
                         .background(look.mode == m.0 ? DT.panel : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                         .shadow(color: look.mode == m.0 ? DT.shadow : .clear, radius: 1, y: 0.5)
                         .contentShape(Rectangle())
-                }.buttonStyle(.plain).help(m.2)
+                }.buttonStyle(.plain).help(m.2).accessibilityLabel(m.2)
             }
         }
         .padding(2)

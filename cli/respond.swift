@@ -357,7 +357,8 @@ func incidentDirs() -> [String] {
 
 func allIncidents() -> [[String: Any]] {
     incidentDirs().compactMap { dir in
-        fm.contents(atPath: dir + "/incident.json").flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        // plainJSON: reports written before 5.1 can carry em dashes
+        fm.contents(atPath: dir + "/incident.json").flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.map { plainJSON($0) as? [String: Any] ?? $0 }
     }
 }
 

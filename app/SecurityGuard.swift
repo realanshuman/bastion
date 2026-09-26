@@ -71,10 +71,18 @@ final class GuardModel: ObservableObject {
     @Published var autonomy = "contain"
     @Published var state = "all_clear"          // act_now · clean_up · all_clear (same answer as the window)
     @Published var needsYou = 0
+    @Published var engineOK = true              // false once the engine is known to be missing: never read that as "clean"
+    @Published var checked = "recent"           // never · stale · recent (bastion status)
+    @Published var scanAgeDays = 0
+    @Published var repairing = false
+    private var bootstrapDone = false
+
+    /// What the menu-bar icon shows. Not running looks like act now; never scanned and out of date keep the plain mark.
+    var iconState: String { !engineOK ? "not_running" : state == "all_clear" && checked != "recent" ? checked : state }
 
     let dir = HOME_DIR + "/.security-guard"
     let home = HOME_DIR
-    let version = "5.0.0"
+    let version = "5.1.0"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 
@@ -83,11 +91,29 @@ final class GuardModel: ObservableObject {
     /// First launch (e.g. from the DMG): install or update the engine and the `bastion` CLI from inside the app.
     private func bootstrapEngine() {
         let helper = Bundle.main.bundlePath + "/Contents/Helpers/bastion"
-        guard FileManager.default.isExecutableFile(atPath: helper) else { return }
+        guard FileManager.default.isExecutableFile(atPath: helper) else { bootstrapDone = true; return }
+        AppStore.shared.bootstrapping = true
         Task.detached(priority: .userInitiated) {
             let out = runTool(helper, ["bootstrap", "--json"])
-            if out.contains("\"installed\"") || out.contains("\"updated\"") {
-                await MainActor.run { self.refreshFast(); self.loadStats(force: true) }
+            let changed = out.contains("\"installed\"") || out.contains("\"updated\"")
+            await MainActor.run {
+                self.bootstrapDone = true
+                AppStore.shared.bootstrapping = false
+                self.refreshFast()
+                if changed { self.loadStats(force: true); AppStore.shared.refresh() }
+            }
+        }
+    }
+
+    /// The engine went missing: put it back from the copy inside the app (the window's Repair does the same)
+    func repair() {
+        withAnimation { repairing = true }
+        let helper = Bundle.main.bundlePath + "/Contents/Helpers/bastion"
+        Task.detached(priority: .userInitiated) {
+            _ = runTool(helper, ["bootstrap", "--json"])
+            await MainActor.run {
+                withAnimation { self.repairing = false }
+                self.refreshFast(); self.loadStats(force: true); AppStore.shared.refresh()
             }
         }
     }
@@ -132,6 +158,7 @@ final class GuardModel: ObservableObject {
             let (incId, incStatus, incSummary, incTodos) = (inc?["id"] as? String ?? "", inc?["status"] as? String ?? "", inc?["summary"] as? String ?? "", inc?["todos"] as? Int ?? 0)
             let level = cs?["autonomy"] as? String ?? "contain"
             let st = cs?["state"] as? String ?? "all_clear", ny = cs?["needs_you"] as? Int ?? 0
+            let found = cs != nil, chk = cs?["checked"] as? String ?? "recent", ageDays = (cs?["last_scan_age_hours"] as? Int ?? 0) / 24
             if let n = (cs?["active_threats"] as? [Any])?.count { active = n }   // live loaders, C2 links, unresolved scan findings
             else {
                 if liveLoader { active += 1 }
@@ -149,6 +176,7 @@ final class GuardModel: ObservableObject {
                     self.incidentId = incId; self.incidentStatus = incStatus; self.incidentSummary = incSummary; self.incidentTodos = incTodos
                     self.autonomy = level
                     self.state = st; self.needsYou = ny
+                    self.engineOK = found || !self.bootstrapDone; self.checked = chk; self.scanAgeDays = ageDays
                 }
             }
         }
@@ -263,7 +291,7 @@ func menuBarIcon(_ state: String) -> NSImage {
         shield.curve(to: p(3.4, 11.2), controlPoint1: p(6.9, 20.6), controlPoint2: p(3.4, 16.6))
         shield.line(to: p(3.4, 4.6)); shield.close()
         NSColor.black.setFill()
-        if state == "act_now" {
+        if state == "act_now" || state == "not_running" {
             shield.fill()
             ctx.setBlendMode(.clear)
             NSBezierPath(roundedRect: NSRect(x: 8.1, y: 4.6, width: 1.8, height: 6.6), xRadius: 0.9, yRadius: 0.9).fill()
@@ -286,7 +314,8 @@ func menuBarIcon(_ state: String) -> NSImage {
         return true
     }
     img.isTemplate = true
-    img.accessibilityDescription = state == "act_now" ? "Bastion: act now" : state == "clean_up" ? "Bastion: something to clean up" : "Bastion: all clear"
+    img.accessibilityDescription = ["act_now": "Bastion: act now", "not_running": "Bastion isn't running", "clean_up": "Bastion: something to clean up",
+                                    "never": "Bastion: not checked yet", "stale": "Bastion: last check is out of date"][state] ?? "Bastion: all clear"
     return img
 }
 
@@ -297,7 +326,24 @@ struct PanelView: View {
     @ObservedObject private var look = Appearance.shared
     @Environment(\.openWindow) private var openWindow
     @State private var ticker: Timer?
-    private var tint: Color { model.state == "act_now" ? DT.red : model.state == "clean_up" ? DT.orange : DT.green }
+    private var tint: Color {
+        !model.engineOK || model.state == "act_now" ? DT.red : model.state == "clean_up" || model.checked == "stale" ? DT.orange
+            : model.checked == "never" ? DT.dim : DT.green
+    }
+    /// Headline and the line under it: the window's answer, shorter
+    private var words: (String, String) {
+        if model.repairing { return ("Repairing Bastion…", "Putting its engine back from the app") }
+        if !model.engineOK { return ("Bastion isn't running", "Nothing is being checked right now") }
+        if model.scanning { return ("Checking your repositories…", "This usually takes a few seconds") }
+        switch model.state {
+        case "act_now": return ("Act now: \(max(model.activeThreats, 1)) active threat\(model.activeThreats == 1 ? "" : "s")", "Something is running or about to · last scan \(model.lastScan)")
+        case "clean_up": return ("\(model.needsYou) thing\(model.needsYou == 1 ? "" : "s") need\(model.needsYou == 1 ? "s" : "") you", "Nothing is running · last scan \(model.lastScan)")
+        default:
+            if model.checked == "never" { return ("Not checked yet", "Run a first scan to check your code") }
+            if model.checked == "stale" { return ("Last checked \(model.scanAgeDays) days ago", "It was clean then. Scan to be sure it still is") }
+            return ("Your code is clean", "Nothing is running · last scan \(model.lastScan)")
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -306,12 +352,18 @@ struct PanelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     status
-                    ask
-                    if model.needsYou > 0 { incident }
-                    stats
-                    scan
-                    protection
-                    recent
+                    if model.engineOK {
+                        ask
+                        if model.needsYou > 0 { incident }
+                        stats
+                        scan
+                        protection
+                        recent
+                    } else {
+                        Text("Its engine is missing or not responding. Repair puts it back from the copy inside the app. Your settings and history are kept.")
+                            .font(uiFont(12)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
+                        scan
+                    }
                 }.padding(14)
             }
             Hairline()
@@ -340,7 +392,7 @@ struct PanelView: View {
         HStack(spacing: 8) {
             BrandMark(size: 17)
             Text("Bastion").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
-            Text("v\(model.version)").font(uiFont(11)).foregroundStyle(DT.faint)
+            Text("v\(model.version)").font(uiFont(11)).foregroundStyle(DT.dim)
             Spacer()
             Button { openMain(.home) } label: {
                 HStack(spacing: 5) {
@@ -355,14 +407,10 @@ struct PanelView: View {
 
     private var status: some View {
         HStack(spacing: 12) {
-            AgentFace(tint: tint, size: 40, working: model.scanning)
+            AgentFace(tint: tint, size: 40, working: model.scanning || model.repairing)
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.scanning ? "Checking your repositories…"
-                     : model.state == "act_now" ? "Act now: \(max(model.activeThreats, 1)) active threat\(model.activeThreats == 1 ? "" : "s")"
-                     : model.state == "clean_up" ? "\(model.needsYou) thing\(model.needsYou == 1 ? "" : "s") need\(model.needsYou == 1 ? "s" : "") you" : "Your code is clean")
-                    .font(uiFont(15, .semibold)).foregroundStyle(DT.text)
-                Text((model.state == "act_now" ? "Something is running or about to" : "Nothing is running") + " · last scan \(model.lastScan)")
-                    .font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
+                Text(words.0).font(uiFont(15, .semibold)).foregroundStyle(DT.text)
+                Text(words.1).font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
             }
             Spacer(minLength: 0)
         }
@@ -422,12 +470,26 @@ struct PanelView: View {
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
     }
 
-    private var scan: some View {
+    @ViewBuilder private var scan: some View {
+        if !model.engineOK {
+            Button { model.repair() } label: {
+                HStack(spacing: 6) {
+                    if model.repairing { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12) }
+                    else { Image(systemName: "wrench.and.screwdriver").font(.system(size: 11, weight: .semibold)) }
+                    Text(model.repairing ? "Repairing…" : "Repair Bastion")
+                }.frame(maxWidth: .infinity)
+            }.buttonStyle(PrimaryButton(tint: DT.red, large: true)).disabled(model.repairing)
+        } else {
+            scanButton
+        }
+    }
+
+    private var scanButton: some View {
         Button { model.scanNow(reposOnly: true) } label: {
             HStack(spacing: 6) {
                 if model.scanning { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12) }
                 else { Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)) }
-                Text(model.scanning ? "Scanning…" : "Scan now")
+                Text(model.scanning ? "Scanning…" : model.checked == "never" ? "Run your first scan" : "Scan now")
             }.frame(maxWidth: .infinity)
         }.buttonStyle(PrimaryButton(large: true)).disabled(model.scanning)
     }
@@ -480,7 +542,7 @@ struct PanelView: View {
             }
             VStack(alignment: .leading, spacing: 0) {
                 if model.events.isEmpty {
-                    Text("Nothing yet. All quiet.").font(uiFont(12)).foregroundStyle(DT.dim).padding(12)
+                    Text("Nothing yet.").font(uiFont(12)).foregroundStyle(DT.dim).padding(12)
                 }
                 ForEach(Array(model.events.prefix(4).enumerated()), id: \.offset) { i, e in
                     if i > 0 { divider }
@@ -488,10 +550,11 @@ struct PanelView: View {
                         Circle().fill(eventStyle(e).tint).frame(width: 6, height: 6)
                         Text(said(e)).font(uiFont(12)).foregroundStyle(DT.text2).lineLimit(1).help(said(e))
                         Spacer(minLength: 4)
-                        Text(ago(e["time"])).font(uiFont(11)).foregroundStyle(DT.faint)
+                        Text(ago(e["time"])).font(uiFont(11)).foregroundStyle(DT.dim)
                     }.padding(.horizontal, 12).frame(height: 34)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(DT.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DT.border))
         }
@@ -503,8 +566,8 @@ struct PanelView: View {
             Button("GitHub") { model.openRepo() }
             Spacer()
             AppearanceSwitch()
-            Button { model.refreshFast(); model.loadStats(force: true) } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
-            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Bastion")
+            Button { model.refreshFast(); model.loadStats(force: true) } label: { Image(systemName: "arrow.clockwise") }.help("Refresh").accessibilityLabel("Refresh")
+            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Bastion").accessibilityLabel("Quit Bastion")
         }
         .buttonStyle(.plain).font(uiFont(12, .medium)).foregroundStyle(DT.dim)
         .padding(.horizontal, 14).frame(height: 40)
@@ -556,7 +619,7 @@ struct BastionApp: App {
         MenuBarExtra {
             PanelView(model: model)
         } label: {
-            MenuBarLabel(state: model.state)
+            MenuBarLabel(state: model.iconState)
         }.menuBarExtraStyle(.window)
         Window("Bastion", id: "main") { MainWindow() }
             .windowStyle(.hiddenTitleBar)
