@@ -10,10 +10,11 @@
 <meta property="og:title" content="Bastion — the security agent that keeps malware out of your code">
 <meta property="og:description" content="Watches your projects, stops hidden malware before it runs, and helps you fix it in one click. Free and open source for macOS.">
 <meta property="og:url" content="https://bastion-neon.vercel.app/">
-<meta property="og:image" content="https://bastion-neon.vercel.app/assets/og.png">
+<meta property="og:image" content="https://bastion-neon.vercel.app/assets/og.jpg">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://bastion-neon.vercel.app/assets/og.png">
+<meta name="twitter:image" content="https://bastion-neon.vercel.app/assets/og.jpg">
 <link rel="canonical" href="https://bastion-neon.vercel.app/">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="apple-touch-icon" href="assets/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -51,7 +52,7 @@
     background: rgba(255, 255, 255, 0.82); backdrop-filter: saturate(160%) blur(12px); -webkit-backdrop-filter: saturate(160%) blur(12px); }
   .nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
   .brand { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
-  .brand .mark { width: 26px; height: 26px; border-radius: 8px; background: var(--ink); color: #fff; display: grid; place-items: center; }
+  .brand .logo { width: 24px; height: 24px; color: var(--ink); flex: none; }
   .links { display: flex; gap: 26px; }
   .links a { text-decoration: none; color: var(--muted); font-size: 15px; }
   .links a:hover { color: var(--ink); }
@@ -153,10 +154,22 @@
     background:
       radial-gradient(55% 70% at 20% 100%, #d9f4e4 0%, rgba(217, 244, 228, 0) 70%),
       radial-gradient(50% 70% at 85% 100%, #dcebfb 0%, rgba(220, 235, 251, 0) 70%), var(--soft); }
-  footer { padding-block: 36px 44px; }
-  footer .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 26px; color: var(--muted); font-size: 14px; }
-  footer a { text-decoration: none; color: var(--muted); }
-  footer a:hover { color: var(--ink); }
+  .foot { padding-top: clamp(40px, 6vw, 72px); overflow: hidden; }
+  .foot-top { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.9fr); gap: 40px; padding-bottom: 44px; border-bottom: 1px solid var(--line); }
+  .foot-brand { display: grid; gap: 16px; align-content: start; justify-items: start; }
+  .foot-brand p { color: var(--muted); font-size: 15px; max-width: 26em; }
+  .foot-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+  .foot-cols div { display: grid; gap: 10px; align-content: start; }
+  .foot-cols h4 { margin: 0 0 4px; font-size: 13px; font-weight: 500; color: var(--ink); }
+  .foot-cols a { color: var(--muted); text-decoration: none; font-size: 15px; width: fit-content; }
+  .foot-cols a:hover { color: var(--ink); }
+  .foot-bottom { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding-block: 22px; font-size: 14px; color: var(--muted); }
+  .foot-bottom a { color: var(--ink); font-weight: 500; text-decoration: none; border-bottom: 1px solid var(--line); }
+  .foot-bottom a:hover { border-color: var(--ink); }
+  /* the name, set large and cut off by the page edge */
+  .wordmark { font-family: var(--display); font-weight: 600; letter-spacing: -0.065em; line-height: 0.8; text-align: center;
+    font-size: min(22.5vw, 300px); height: 0.66em; overflow: hidden; margin-top: 8px; user-select: none;
+    background: linear-gradient(180deg, #e6e9e7 0%, #f6f7f6 85%); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
   /* tablets and small laptops: steps and cards read as rows */
   @media (max-width: 900px) {
@@ -168,6 +181,7 @@
     .devs { grid-template-columns: 1fr; }
     .trick { grid-template-columns: 1fr; }
     .trust { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 28px; }
+    .foot-top { grid-template-columns: 1fr; }
   }
   /* phones */
   @media (max-width: 600px) {
@@ -198,7 +212,8 @@
     .dev { padding: 20px; }
     .trust { grid-template-columns: 1fr; }
     .end { border-radius: 24px; padding: 44px 16px; }
-    footer .wrap { gap: 10px 20px; }
+    .foot-top { grid-template-columns: 1fr; gap: 32px; }
+    .foot-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 28px; }
   }
   /* big touch targets on touch screens */
   @media (pointer: coarse) {
@@ -212,11 +227,17 @@
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+  <defs>
+    <clipPath id="bastion-shield"><path d="M12 1.6 20.6 4.6V11.2C20.6 16.6 17.1 20.6 12 22.6 6.9 20.6 3.4 16.6 3.4 11.2V4.6Z"/></clipPath>
+    <symbol id="bastion-mark" viewBox="0 0 24 24"><g clip-path="url(#bastion-shield)" fill="currentColor"><rect y="0" width="24" height="7"/><rect y="8.35" width="24" height="3.05"/><rect y="12.75" width="24" height="3.05"/><rect y="17.15" width="24" height="7"/></g></symbol>
+  </defs>
+</svg>
 
 <header class="nav">
   <div class="wrap">
     <a class="brand" href="#top" aria-label="Bastion, back to top">
-      <span class="mark"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.4 2.9v5.7c0 4.6-3.1 8.6-7.4 10.2-4.3-1.6-7.4-5.6-7.4-10.2V5.5L12 2.6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.7 12.2l2.3 2.3 4.4-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <svg class="logo" width="24" height="24" aria-hidden="true"><use href="#bastion-mark"/></svg>
       Bastion
     </a>
     <nav class="links" aria-label="Sections">
@@ -362,14 +383,41 @@
   </section>
 </main>
 
-<footer>
+<footer class="foot">
   <div class="wrap">
-    <a class="brand" href="#top"><span class="mark"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.4 2.9v5.7c0 4.6-3.1 8.6-7.4 10.2-4.3-1.6-7.4-5.6-7.4-10.2V5.5L12 2.6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.7 12.2l2.3 2.3 4.4-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Bastion</a>
-    <span class="spacer"></span>
-    <a href="https://github.com/realanshuman/bastion">GitHub</a>
-    <a href="https://github.com/realanshuman/bastion/releases">Releases</a>
-    <a href="https://github.com/realanshuman/bastion#readme">Docs</a>
-    <a href="https://github.com/realanshuman/bastion/blob/main/LICENSE">MIT License</a>
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a class="brand" href="#top"><svg class="logo" width="24" height="24" aria-hidden="true"><use href="#bastion-mark"/></svg>Bastion</a>
+        <p>The security agent that keeps malware out of your code. Free and open source for macOS.</p>
+        <a class="btn sm dark" href="https://github.com/realanshuman/bastion/releases/latest">Download for macOS</a>
+      </div>
+      <nav class="foot-cols" aria-label="Footer">
+        <div>
+          <h4>Product</h4>
+          <a href="#how">How it helps</a>
+          <a href="https://github.com/realanshuman/bastion/releases/latest">Download</a>
+          <a href="https://github.com/realanshuman/bastion/releases">What's new</a>
+        </div>
+        <div>
+          <h4>Developers</h4>
+          <a href="https://github.com/realanshuman/bastion#command-line">Command line</a>
+          <a href="https://github.com/realanshuman/bastion#use-it-with-ai-agents">AI agents</a>
+          <a href="https://github.com/realanshuman/bastion#team-pr-guard">GitHub Action</a>
+          <a href="https://github.com/realanshuman/bastion#readme">Docs</a>
+        </div>
+        <div>
+          <h4>Project</h4>
+          <a href="https://github.com/realanshuman/bastion">GitHub</a>
+          <a href="https://github.com/realanshuman/bastion/issues">Report an issue</a>
+          <a href="https://github.com/realanshuman/bastion/blob/main/LICENSE">MIT License</a>
+        </div>
+      </nav>
+    </div>
+    <div class="foot-bottom">
+      <p>Built by <a href="https://github.com/realanshuman">Ansh</a></p>
+      <p>© 2026 Bastion · Free and open source</p>
+    </div>
+    <div class="wordmark" aria-hidden="true">Bastion</div>
   </div>
 </footer>
 </body>
