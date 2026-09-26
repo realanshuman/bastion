@@ -97,10 +97,11 @@
   .small { margin-top: 18px; font-size: 14px; color: var(--muted); }
   .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 10px; }
   .meta span + span::before { content: "·"; margin-right: 10px; }
-  .window { margin: clamp(44px, 6vw, 64px) auto 0; max-width: 1040px; border-radius: 16px 16px 0 0; overflow: hidden; background: #0e0f11;
+  .window { container-type: inline-size; margin: clamp(44px, 6vw, 64px) auto 0; max-width: 1040px; border-radius: clamp(8px, 1.6vw, 16px) clamp(8px, 1.6vw, 16px) 0 0; overflow: hidden; background: #0e0f11;
     box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04), 0 30px 80px -30px rgba(16, 24, 20, 0.45); border: 1px solid rgba(0, 0, 0, 0.08); border-bottom: 0; }
-  .window .bar { height: 38px; display: flex; align-items: center; gap: 7px; padding-inline: 14px; background: #0a0a0b; }
-  .window .bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a3b40; }
+  /* the whole mock scales as one piece: title bar and dots keep their size relative to the window */
+  .window .bar { height: 3.654cqw; display: flex; align-items: center; gap: 0.673cqw; padding-inline: 1.346cqw; background: #0a0a0b; }
+  .window .bar i { width: 1.058cqw; height: 1.058cqw; border-radius: 50%; background: #3a3b40; }
   .window img { width: 100%; height: auto; aspect-ratio: 2400 / 1320; object-fit: cover; object-position: top; }
 
   /* how it helps */
@@ -196,11 +197,8 @@
     .ctas .btn { height: 50px; font-size: 16px; }
     .meta { flex-direction: column; align-items: center; }
     .meta span + span::before { content: none; }
-    /* the app shot: zoom into the first item so it stays readable */
-    .window { margin-top: 36px; height: 330px; border-radius: 14px 14px 0 0; }
-    .window .bar { height: 30px; }
-    .window .bar i { width: 9px; height: 9px; }
-    .window img { width: 232%; max-width: none; aspect-ratio: auto; height: auto; transform: translateX(-22%); }
+    /* the app shot: the same mock as on desktop, scaled down as one piece */
+    .window { margin-top: 36px; }
     .step { grid-template-columns: 1fr; grid-template-rows: none; }
     .step .stage { grid-row: auto; height: 190px; }
     .step .num { margin-top: 2px; }
