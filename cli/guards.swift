@@ -674,7 +674,20 @@ func branchContext(repo: String, ref: String, files: [String]) -> [String: Any] 
         let changed = Set((git(repo, ["diff", "--name-only", ref, "refs/heads/\(branch)"]) ?? "").split(separator: "\n").map(String.init))
         return !changed.isEmpty && changed.isSubset(of: Set(files))
     }()
-    if let remote, localClean, onlyInfectedDiffer {
+    let worktreeClean = branch == current && files.allSatisfy { f in
+        fm.contents(atPath: repo + "/" + f).map { payloadReasons($0, config: true).isEmpty } ?? true }
+    let upstreamIsCurrent = remote != nil && branch == current && worktreeClean
+    if remote == nil && worktreeClean {
+        title = "Commit the fix on \(branch)"
+        why = "Your working copy is already clean — Bastion removed the injected code. \(branch) still has the infected commit until you commit the fix."
+        cmds = ["git -C \(r) add -- " + files.map { "\"\($0)\"" }.joined(separator: " "), "git -C \(r) commit -m \"Remove injected code\""]
+        risk = "commit"
+    } else if upstreamIsCurrent, let remote {
+        title = "Push the fix to \(ref)"
+        why = "Commit the cleaned file on your local \(branch) first, then push it — everyone who pulls \(ref) still gets the infected version until you do."
+        cmds = ["git -C \(r) push \(remote) \(branch)"]
+        risk = "push"
+    } else if let remote, localClean, onlyInfectedDiffer {
         title = "Push your clean copy of \(branch)"
         why = "Your local \(branch) is the same work without the injected code — it differs from the server only in the infected file\(files.count == 1 ? "" : "s"). Pushing it replaces the infected commit (rewrites \(branch)'s history on the server)."
         cmds = ["git -C \(r) push --force-with-lease=\(branch):\(git(repo, ["rev-parse", "--short=12", ref])?.trimmed ?? ref) \(remote) \(branch)"]
@@ -705,7 +718,7 @@ func branchContext(repo: String, ref: String, files: [String]) -> [String: Any] 
         risk = "rewrites-nothing"
     }
     let button = risk == "rewrites-history" ? "Push clean copy…" : risk == "deletes-branch" ? (remote == nil ? "Delete local branch…" : "Delete branch…")
-        : title.hasPrefix("Update") ? "Update branch" : "Fix it"
+        : risk == "commit" ? "Commit fix…" : risk == "push" ? "Push fix…" : title.hasPrefix("Update") ? "Update branch" : "Fix it"
     out["fix"] = ["title": title, "why": why, "commands": cmds, "risk": risk, "button": button]
     return out
 }

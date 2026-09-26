@@ -309,6 +309,10 @@ final class AppStore: ObservableObject {
             ask("\(title)?", "This replaces the branch on GitHub with your clean copy. It only goes through if GitHub still has the infected commit. Anyone who already pulled that commit will need to reset their copy.\n\n\(cmds)", button: "Push clean copy", go)
         case "deletes-branch":
             ask("\(title)?", "This deletes the branch. Bastion can't bring it back.\n\n\(cmds)", button: "Delete branch", go)
+        case "commit":
+            ask("\(title)?", "Bastion commits the cleaned file for you (nothing is pushed).\n\n\(cmds)", button: "Commit", go)
+        case "push":
+            ask("\(title)?", "This pushes your branch to GitHub. Commit the fix first.\n\n\(cmds)", button: "Push", go)
         default:
             ask("\(title)?", cmds, button: "Run", go)
         }

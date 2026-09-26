@@ -124,6 +124,11 @@ func needsYou(threats given: [[String: Any]]? = nil, network: Bool = false, deta
                    "commands": ["git -C \(shellPath(repo)) fetch --prune \(remote)"], "risk": "safe", "button": "Clear it"]
         }
         fix["runnable"] = !(fix["risk"] as? String == "rewrites-nothing")
+        switch fix["risk"] as? String ?? "" {
+        case "commit": what = "Bastion already cleaned \(files.joined(separator: " and ")) in your working copy, but the infected version is still committed on \(branch)."
+        case "push": what = "\(ref) on the server still has the infected \(files.joined(separator: " and ")) — anyone who pulls it gets the malware."
+        default: break
+        }
         var item: [String: Any] = ["id": stableID("branch|\(repo)|\(ref)"), "type": "branch", "danger": danger, "title": fix["title"] ?? "Clean \(branch)",
                                    "what": what, "where": "\(ref) · \(files.joined(separator: ", "))", "repo": repo,
                                    "repo_name": (repo as NSString).lastPathComponent, "branch": c, "proof": c["proof"] ?? [], "fix": fix]
@@ -131,7 +136,9 @@ func needsYou(threats given: [[String: Any]]? = nil, network: Bool = false, deta
         items.append(item)
     }
 
-    // 3. what an open incident still asks of you that Bastion can't check for you (rotate secrets, remove access…)
+    // 3. what an open incident still asks of you that Bastion can't check for you (rotate secrets, remove access…);
+    //    committing and pushing fixes are already live items above, so they aren't repeated
+    let branchRepos = Set(items.filter { $0["type"] as? String == "branch" }.compactMap { $0["repo"] as? String })
     for inc in open {
         let id = inc["id"] as? String ?? ""
         let ticked = Set(inc["ticked"] as? [String] ?? [])
@@ -139,6 +146,9 @@ func needsYou(threats given: [[String: Any]]? = nil, network: Bool = false, deta
             let key = t["key"] as? String ?? ""
             guard !key.hasPrefix("branch:"), !key.hasPrefix("resolve"), !ticked.contains(key),
                   !((t["cmd"] as? String) ?? "").hasPrefix("bastion incident resolve") else { continue }
+            let title = t["title"] as? String ?? ""
+            if (title.hasPrefix("Commit the cleaned file") || title.hasPrefix("Clean the pushed branches")),
+               branchRepos.contains(where: { title.hasSuffix(" " + ($0 as NSString).lastPathComponent) }) { continue }
             items.append(["id": stableID("todo|\(id)|\(key)"), "type": "todo", "danger": "check", "title": t["title"] ?? "", "what": t["why"] ?? "",
                           "incident": id, "todo_key": key,
                           "fix": ["title": t["title"] ?? "", "why": t["how"] ?? "", "commands": (t["cmd"] as? String).map { [$0] } ?? [], "risk": "manual", "runnable": false]])

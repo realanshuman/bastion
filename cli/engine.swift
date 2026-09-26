@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "4.2.0"
+let VERSION = "4.2.1"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
