@@ -1,4 +1,4 @@
-// main.swift — `bastion` command-line entry point: argument parsing, human output, dispatch.
+// main.swift: the `bastion` command-line entry point (argument parsing, human output, dispatch).
 import Foundation
 
 // MARK: - Human output
@@ -53,7 +53,7 @@ func humanStatus(_ s: [String: Any]) {
         let br = l["infected_branches"] as? Int ?? 0
         print("  last scan           \(friendly(l["time"])) · " + (clean ? good("clean") : warn((l["result"] as? String ?? "").lowercased()))
               + (clean && br > 0 ? warn(" · \(br) infected branch\(br == 1 ? "" : "es")") + faint("   (bastion branches)") : ""))
-    } else { print("  last scan           " + faint("never — run: bastion scan")) }
+    } else { print("  last scan           " + faint("never (run: bastion scan)")) }
     let q = s["quarantine_count"] as? Int ?? 0
     print("  quarantine          " + (q == 0 ? faint("empty") : warn("\(q) item\(q == 1 ? "" : "s")")))
     let level = s["autonomy"] as? String ?? "contain"
@@ -66,8 +66,8 @@ func humanStatus(_ s: [String: Any]) {
 
 func humanIncident(_ r: [String: Any]) {
     switch r["status"] as? String ?? "" {
-    case "clear": print(good("✓ nothing to respond to") + faint("  — no findings and no new automatic actions")); return
-    case "skipped": print(faint("skipped — \(r["reason"] as? String ?? "")")); return
+    case "clear": print(good("✓ nothing to respond to") + faint(": no findings and no new automatic actions")); return
+    case "skipped": print(faint("skipped: \(r["reason"] as? String ?? "")")); return
     default: break
     }
     let status = r["status"] as? String ?? "open"
@@ -79,7 +79,7 @@ func humanIncident(_ r: [String: Any]) {
     let todos = r["todos"] as? [[String: Any]] ?? []
     if !todos.isEmpty { print("\n" + strong("your to-dos")) }
     for (n, t) in todos.enumerated() {
-        print("  \(n + 1). " + strong(t["title"] as? String ?? "") + faint(" — \(t["why"] as? String ?? "")"))
+        print("  \(n + 1). " + strong(t["title"] as? String ?? "") + faint(". \(t["why"] as? String ?? "")"))
         for l in ((t["cmd"] as? String) ?? "").split(separator: "\n") { print("       " + paint(String(l), "36")) }
         for l in ((t["how"] as? String) ?? "").split(separator: "\n") { print("       " + faint(String(l))) }
     }
@@ -99,10 +99,10 @@ func connectInfo() -> [String: Any] {
 
 func humanConnect(_ c: [String: Any]) {
     let bin = c["command"] as? String ?? "bastion"
-    print(strong("Connect Bastion to your AI agent") + faint("  — it runs as a local MCP server: \(bin) mcp"))
+    print(strong("Connect Bastion to your AI agent") + faint("  (a local MCP server: \(bin) mcp)"))
     print("\n" + strong("Claude Code"))
     print("  \(c["claude_code"] as? String ?? "")")
-    print("\n" + strong("Cursor") + faint("  (~/.cursor/mcp.json)") + ", " + strong("Claude Desktop") + ", " + strong("Windsurf") + faint("  — add to mcpServers:"))
+    print("\n" + strong("Cursor") + faint("  (~/.cursor/mcp.json)") + ", " + strong("Claude Desktop") + ", " + strong("Windsurf") + faint(": add to mcpServers:"))
     print("  \"bastion\": { \"command\": \"\(bin)\", \"args\": [\"mcp\"] }")
     print("\n" + strong("Codex CLI") + faint("  (~/.codex/config.toml)"))
     print((c["codex_toml"] as? String ?? "").split(separator: "\n").map { "  " + $0 }.joined(separator: "\n"))
@@ -110,8 +110,9 @@ func humanConnect(_ c: [String: Any]) {
 }
 
 let HELP = """
-bastion \(VERSION) — guard for supply-chain malware in JavaScript projects
+bastion \(VERSION): a guard against supply-chain malware in JavaScript projects
 
+  bastion ask "<question>"        ask in plain words: "is my-app safe?", "what needs me?", "what happened today?"
   bastion status                  is this Mac protected right now?
   bastion check [dir]             safe to run install/dev/build here? (default: current folder)
   bastion scan [dirs…]            scan your git repos, or the given folders (--full: whole home folder,
@@ -178,7 +179,7 @@ func confirmWeakening(_ question: String, why: String = "This lowers protection,
     }
     FileHandle.standardError.write(Data("\(question) [y/N] ".utf8))
     let answer = (readLine() ?? "").trimmed.lowercased()
-    guard answer == "y" || answer == "yes" else { throw Failure("Cancelled — nothing changed.") }
+    guard answer == "y" || answer == "yes" else { throw Failure("Cancelled. Nothing changed.") }
 }
 
 do {
@@ -188,6 +189,36 @@ do {
 
     case "version":
         output(["version": VERSION, "engine": ENGINE]) { print(VERSION) }
+
+    case "ask":
+        try requireEngine()
+        var r = askBastion(rest.joined(separator: " "))
+        if !wantJSON, let auto = r["auto"] as? [String: Any] {   // the app shows progress for these; a terminal just runs them
+            switch auto["kind"] as? String ?? "" {
+            case "scan":
+                FileHandle.standardError.write(Data(faint("scanning…\n").utf8))
+                if let s = try? scan(paths: [], fullHome: auto["full"] as? Bool == true, readOnly: false) {
+                    let n = (s["findings"] as? [Any])?.count ?? 0
+                    r["answer"] = n == 0 ? "Scan finished in \(seconds(s))s. All clean." : "Scan finished in \(seconds(s))s."
+                    r["tone"] = n == 0 ? "good" : "warn"
+                    let next = askBastion("what needs me")
+                    r["points"] = n == 0 ? [] : next["points"]; r["actions"] = n == 0 ? [] : next["actions"]
+                }
+            case "present":
+                let args = auto["args"] as? [String] ?? []
+                guard args.count == 2 else { break }
+                if let h = try? (args[0] == "history" ? historyHunt(args[1]) : depsReport(args[1], online: nil, preinstall: false)) {
+                    r["answer"] = h["summary"] as? String ?? ""
+                    r["tone"] = (h["clean"] as? Bool == true) || (h["findings"] as? [Any])?.isEmpty == true ? "good" : "warn"
+                    r["actions"] = [["label": "Details", "command": "bastion \(args[0]) \(shellPath(args[1]))"]]
+                }
+            case "appearance":
+                r["answer"] = "Light and dark mode are an app setting. Ask in the Bastion app, or pick one in its Settings."
+                r["tone"] = "info"
+            default: break
+            }
+        }
+        output(r) { humanAnswer(r) }
 
     case "help":
         print(HELP)
@@ -204,11 +235,11 @@ do {
             let dir = r["path"] as? String ?? ""
             if safe {
                 let on = (r["current_branch"] as? String).map { " on \($0)" } ?? ""
-                print(good("✓ safe to run\(on)") + faint("  — no injected configs, install hooks or auto-run tasks in \(shortPath(dir))"))
+                print(good("✓ safe to run\(on)") + faint(": no injected configs, install hooks or auto-run tasks in \(shortPath(dir))"))
                 let refs = r["infected_branch_refs"] as? [String] ?? []
                 if !refs.isEmpty {
                     print(warn("! \(refs.count) other branch\(refs.count == 1 ? " carries" : "es carry") malware: ") + refs.joined(separator: ", ")
-                          + faint("  — don't check \(refs.count == 1 ? "it" : "them") out or merge \(refs.count == 1 ? "it" : "them")"))
+                          + faint(". Don't check \(refs.count == 1 ? "it" : "them") out or merge \(refs.count == 1 ? "it" : "them")."))
                 }
             }
             else { print(bad("✗ not safe to run install/dev/build in \(shortPath(dir))")); printFindings(r["findings"] as? [[String: Any]] ?? [], under: dir) }
@@ -224,7 +255,7 @@ do {
         let r = try scan(paths: rest, fullHome: argv.contains("--full"), readOnly: argv.contains("--read-only") || argv.contains("--dry-run"))
         let fs = r["findings"] as? [[String: Any]] ?? []
         output(r, code: fs.isEmpty ? 0 : 2) {
-            if fs.isEmpty { print(good("✓ clean") + faint("  — nothing found (\(seconds(r))s)")) }
+            if fs.isEmpty { print(good("✓ clean") + faint(": nothing found (\(seconds(r))s)")) }
             else {
                 print(bad("✗ \(fs.count) finding\(fs.count == 1 ? "" : "s")") + faint("  (\(seconds(r))s)")); printFindings(fs)
                 let q = (r["quarantined"] as? [Any])?.count ?? 0
@@ -238,7 +269,7 @@ do {
     case "findings":
         let r = findingsReport()
         output(r) {
-            guard r["ran"] as? Bool ?? false else { print(faint("No scan has run yet — run: bastion scan")); return }
+            guard r["ran"] as? Bool ?? false else { print(faint("No scan has run yet. Run: bastion scan")); return }
             let fs = r["findings"] as? [[String: Any]] ?? []
             print(strong("last scan") + " \(friendly(r["time"])) · " + (fs.isEmpty ? good("clean") : bad("\(fs.count) finding\(fs.count == 1 ? "" : "s")")))
             printFindings(fs)
@@ -247,7 +278,7 @@ do {
     case "activity":
         let events = activity(limit: limit)
         output(["events": events]) {
-            if events.isEmpty { print(faint("No activity yet — all quiet.")) }
+            if events.isEmpty { print(faint("No activity yet. All quiet.")) }
             for e in events { print(faint(e["time"] as? String ?? "") + "  " + (e["message"] as? String ?? "")) }
         }
 
@@ -293,13 +324,13 @@ do {
             case "block":
                 guard ipFamily(value) != nil else { throw Failure("The blocklist takes IP addresses (e.g. 203.0.113.7), not \(value).") }
                 guard !isLocalAddress(value) || argv.contains("--force") else {
-                    throw Failure("\(value) is a local/private address — blocking it would kill your own dev servers. Add --force if you really mean it.")
+                    throw Failure("\(value) is a local or private address. Blocking it would kill your own dev servers. Add --force if you really mean it.")
                 }
                 guard !listEntries("allowlist.txt").contains(value) else { throw Failure("\(value) is on your allowlist. Remove it there first.") }
                 try confirmWeakening("Block \(value)? The watcher will kill node processes that connect to it.")
             default:
                 guard value.count >= 5, !value.has(#"^\.[A-Za-z]{1,5}$"#), !HOME.hasPrefix(value), !value.contains("\t") else {
-                    throw Failure("That pattern is too broad — it would hide real findings. Use a specific path fragment, like /docs/security-notes/.")
+                    throw Failure("That pattern is too broad. It would hide real findings. Use a specific path fragment, like /docs/security-notes/.")
                 }
                 try confirmWeakening("Ignore findings in any path containing \"\(value)\"?")
             }
@@ -308,11 +339,11 @@ do {
         }
         let changed = try (adding ? addEntry(file, value, note: note) : removeEntry(file, value))
         if changed {
-            logEvent("CHANGED: \(command) list — \(adding ? "added" : "removed") \(command == "ignore" ? "a pattern" : value) (bastion CLI)")
+            logEvent("CHANGED: \(adding ? "added" : "removed") \(command == "ignore" ? "a pattern" : value) \(adding ? "to" : "from") the \(command) list (bastion CLI)")
             if (adding && command != "block") || (!adding && command == "block") { notify("Your \(command) list was changed.") }
         }
         output(["list": command, "action": rest[0], "value": value, "changed": changed]) {
-            print(changed ? good("✓ \(adding ? "added to" : "removed from") \(command) list: \(value)") : faint("no change — \(value) was \(adding ? "already there" : "not on the list")"))
+            print(changed ? good("✓ \(adding ? "added to" : "removed from") \(command) list: \(value)") : faint("no change: \(value) was \(adding ? "already there" : "not on the list")"))
         }
 
     case "enable", "disable":
@@ -327,7 +358,7 @@ do {
 
     case "respond":
         if !wantJSON && !argv.contains("--quiet") {
-            FileHandle.standardError.write(Data(faint("investigating — scan, git history, processes, network…\n").utf8))
+            FileHandle.standardError.write(Data(faint("investigating: scan, git history, processes, network…\n").utf8))
         }
         let r = try respond(paths: rest, planOnly: argv.contains("--plan"), trigger: trigger, wait: trigger == "manual" || trigger == "agent",
                             fromLog: fromLog, forceContain: argv.contains("--contain") && trigger == "manual")
@@ -410,7 +441,7 @@ do {
             for c in details {
                 let fix = c["fix"] as? [String: Any] ?? [:]
                 print(bad("✗ ") + strong(c["ref"] as? String ?? "") + faint("  in \(tilde(c["repo"] as? String ?? ""))"))
-                if let d = c["default_branch"] as? String, c["default_clean"] as? Bool == true { print("  " + good("\(d) is clean") + faint(" — only this branch carries it")) }
+                if let d = c["default_branch"] as? String, c["default_clean"] as? Bool == true { print("  " + good("\(d) is clean") + faint(". Only this branch carries it.")) }
                 for p in c["proof"] as? [[String: Any]] ?? [] {
                     print("  \(p["file"] ?? ""): " + (p["text"] as? String ?? ""))
                     if let see = p["see_it"] as? String { print(faint("    see it: ") + see) }
@@ -431,7 +462,7 @@ do {
                 print("  " + bad("+") + " \(e["short"] ?? "") " + strong("\(e["file"] ?? "")") + faint("  by \(e["committer"] ?? "") <\(e["committer_email"] ?? "")> · \(humanTime(e["date"])) · in \((e["refs"] as? [String] ?? []).joined(separator: ", "))"))
             }
             for b in r["infected_branches"] as? [[String: Any]] ?? [] { print("  " + warn("⎇") + " \(b["ref"] ?? ""): \(b["file"] ?? "")") }
-            for o in r["unreachable"] as? [[String: Any]] ?? [] { print("  " + faint("◌ \(o["short"] ?? "") \(o["file"] ?? "") — left over from a deleted branch")) }
+            for o in r["unreachable"] as? [[String: Any]] ?? [] { print("  " + faint("◌ \(o["short"] ?? "") \(o["file"] ?? ""), left over from a deleted branch")) }
             print(faint(r["note"] as? String ?? ""))
         }
 
@@ -477,7 +508,7 @@ do {
     case "osv":
         let action = rest.first ?? "status"
         if action == "on" {
-            try confirmWeakening("Check dependencies against osv.dev? Bastion sends package names and versions — never your code.",
+            try confirmWeakening("Check dependencies against osv.dev? Bastion sends package names and versions, never your code.",
                                  why: "This sends package names and versions to osv.dev, so a person has to confirm it.")
             updateSettings { $0["osv"] = true }
             logEvent("CHANGED: online malware check (osv.dev) turned ON")
@@ -510,7 +541,7 @@ do {
         let r = todosReport(network: !argv.contains("--offline"))
         let items = r["items"] as? [[String: Any]] ?? []
         output(r, code: items.isEmpty ? 0 : 2) {
-            print(items.isEmpty ? good("✓ all clear — nothing needs you") : strong(r["summary"] as? String ?? ""))
+            print(items.isEmpty ? good("✓ all clear, nothing needs you") : strong(r["summary"] as? String ?? ""))
             for i in items {
                 let d = i["danger"] as? String ?? ""
                 let mark = d == "now" ? bad("● act now") : d == "dormant" ? warn("● dormant") : d == "leftover" ? faint("● leftover") : faint("● check")

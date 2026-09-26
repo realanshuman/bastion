@@ -4,7 +4,7 @@
 selfdir="$HOME/.security-guard/shims"
 name="$(basename "$0")"
 log(){ echo "$(date '+%F %T')  BLOCKED [$name]: $1" >> "$HOME/.security-guard/ALERTS.txt" 2>/dev/null
-  [ -n "${BASTION_NO_NOTIFY:-}" ] || osascript -e "display notification \"Blocked $name: $1\" with title \"🛡 Bastion — prevented execution\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
+  [ -n "${BASTION_NO_NOTIFY:-}" ] || osascript -e "display notification \"Blocked $name: $1\" with title \"🛡 Bastion stopped a command\" sound name \"Basso\"" >/dev/null 2>&1 || true; }
 # resolve the REAL binary = next one in PATH that isn't this shim dir
 real=""; IFS=: read -ra parts <<< "$PATH"
 for d in "${parts[@]}"; do [ "$d" = "$selfdir" ] && continue; [ -x "$d/$name" ] && { real="$d/$name"; break; }; done
@@ -49,18 +49,18 @@ case "$name" in
     # before dev/build/start/test/gen scripts, refuse if the repo config is injected
     case " $* " in
       *" dev "*|*" build "*|*" start "*|*" test "*|*" gen:api "*|*" run "*|*" preview "*)
-        bad=$(scan_configs "$PWD") && { log "injected config in $bad"; echo "🛡 Bastion blocked '$name $*' — injected config: $bad" >&2; echo "   Clean the file before running (git checkout from a trusted branch, or fix by hand)." >&2; exit 1; }
+        bad=$(scan_configs "$PWD") && { log "injected config in $bad"; echo "🛡 Bastion blocked '$name $*': injected config in $bad" >&2; echo "   Clean the file before running (git checkout from a trusted branch, or fix by hand)." >&2; exit 1; }
 ;;
     esac
     # before install, refuse if this project's own install hooks download/decode code (skipped with --ignore-scripts)
     case " $* " in *" --ignore-scripts "*) ;; *)
       [ "${npm_config_ignore_scripts:-}" = "true" ] || case " $* " in
         *" install "*|*" i "*|*" ci "*|*" add "*|"  ")
-          [ "$name" = "npx" ] || { bad=$(scan_hooks "$PWD") && { log "suspicious install hook in $bad"; echo "🛡 Bastion blocked '$name $*' — suspicious install hook in $bad" >&2; echo "   Review the preinstall/postinstall script first, or install with --ignore-scripts." >&2; exit 1; }; }
+          [ "$name" = "npx" ] || { bad=$(scan_hooks "$PWD") && { log "suspicious install hook in $bad"; echo "🛡 Bastion blocked '$name $*': suspicious install hook in $bad" >&2; echo "   Review the preinstall/postinstall script first, or install with --ignore-scripts." >&2; exit 1; }; }
           # lockfile sources and (if turned on) known-malicious versions from osv.dev
           if [ "$name" != "npx" ] && [ -x "$HOME/.security-guard/bin/bastion" ]; then
             "$HOME/.security-guard/bin/bastion" deps "$PWD" --preinstall --quiet >/dev/null 2>&1
-            [ $? -eq 2 ] && { log "unsafe dependencies in $PWD"; echo "🛡 Bastion blocked '$name $*' — the lockfile pulls a known-malicious package or downloads from an untrusted address." >&2; echo "   Details: bastion deps" >&2; exit 1; }
+            [ $? -eq 2 ] && { log "unsafe dependencies in $PWD"; echo "🛡 Bastion blocked '$name $*': the lockfile pulls a known-malicious package or downloads from an untrusted address." >&2; echo "   Details: bastion deps" >&2; exit 1; }
           fi ;;
       esac ;;
     esac ;;

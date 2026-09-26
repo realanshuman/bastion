@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# uninstall.sh — stop and remove Bastion background agents. --purge also deletes the tool folder.
+# uninstall.sh: stop and remove Bastion background agents. --purge also deletes the tool folder.
 LA="$HOME/Library/LaunchAgents"
 for lbl in com.bastion.guard.scan com.bastion.guard.watcher; do
   p="$LA/$lbl.plist"

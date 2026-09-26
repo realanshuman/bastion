@@ -21,10 +21,10 @@ refs=""; [ -t 0 ] || refs=$(cat)                     # git passes "<local ref> <
 bad=0
 while read -r _ sha _ _; do
   case "$sha" in ""|0000000000000000000000000000000000000000) continue;; esac   # branch deletion
-  files=$(g ls-tree -r --name-only "$sha" 2>/dev/null) || { echo "⚠️  Bastion couldn't read commit $sha — this push was not checked." >&2; continue; }
+  files=$(g ls-tree -r --name-only "$sha" 2>/dev/null) || { echo "⚠️  Bastion couldn't read commit $sha. This push was not checked." >&2; continue; }
   while IFS= read -r f; do
     g cat-file -p "$sha:$f" > "$tmp" 2>/dev/null || continue
-    suspicious "$tmp" && { echo "🛑 Bastion: push blocked — injection payload in $f" >&2; bad=1; }
+    suspicious "$tmp" && { echo "🛑 Bastion blocked this push: injection payload in $f" >&2; bad=1; }
   done < <(printf '%s\n' "$files" | grep -E "$CONFIG_NAMES")
 done <<< "$refs"
 [ "$bad" -eq 1 ] && { echo "   Restore the file from a trusted commit, then push again. (Bastion)" >&2; exit 1; }

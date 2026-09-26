@@ -1,8 +1,8 @@
-// engine.swift — shared core of the `bastion` CLI: the Bastion engine in ~/.security-guard.
+// engine.swift: shared core of the `bastion` CLI (the Bastion engine in ~/.security-guard).
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "4.2.1"
+let VERSION = "5.0.0"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -37,7 +37,7 @@ func requireEngine() throws {
 
 final class Flag: @unchecked Sendable { var value = false }
 
-/// Runs a program with an argument vector — untrusted text never goes through a shell.
+/// Runs a program with an argument vector: untrusted text never goes through a shell.
 /// stdin is closed so children can't read MCP traffic, and the whole tree is killed on timeout.
 func run(_ exe: String, _ args: [String], timeout: TimeInterval = 120, env extra: [String: String] = [:]) -> (out: String, code: Int32, timedOut: Bool) {
     let r = runData(exe, args, timeout: timeout, env: extra)
@@ -114,7 +114,7 @@ func stampDate(_ stamp: String) -> Date? {
 }
 
 func friendly(_ iso: Any?) -> String {
-    guard let s = iso as? String, let d = ISO8601DateFormatter().date(from: s) else { return "—" }
+    guard let s = iso as? String, let d = ISO8601DateFormatter().date(from: s) else { return "unknown" }
     let f = DateFormatter(); f.dateFormat = "MMM d, HH:mm"
     return f.string(from: d)
 }
@@ -137,12 +137,12 @@ let KINDS: [String: Kind] = [
         fix: "Don't run npm/pnpm/yarn/bun install here until the hook has been reviewed. If it isn't expected, remove it and check the commit that added it. `npm install --ignore-scripts` installs without running hooks.",
         autoHandled: false),
     "AUTORUN": Kind(id: "editor_autorun", title: "Editor auto-run task", severity: "medium", scope: "project",
-        why: ".vscode/tasks.json has a task that runs automatically when the folder is opened in VS Code or Cursor — a known way malicious repositories run code the moment they're opened.",
+        why: ".vscode/tasks.json has a task that runs automatically when the folder is opened in VS Code or Cursor. It's a known way malicious repositories run code the moment they're opened.",
         fix: "Read the task's command before opening this folder in an editor. If nobody on the team added it, delete the task and check the commit that added it. Keep the editor's automatic-tasks setting off.",
         autoHandled: false),
     "STAGING": Kind(id: "staging_folder", title: "Malware staging folder", severity: "high", scope: "machine",
         why: "A temporary folder this stealer uses to collect data before uploading it. It means the payload has run on this Mac.",
-        fix: "A normal scan (`bastion scan`) moves it to quarantine. Because the payload ran, change passwords, tokens and API keys that were on this Mac — from a different, clean device.",
+        fix: "A normal scan (`bastion scan`) moves it to quarantine. Because the payload ran, change passwords, tokens and API keys that were on this Mac, from a different, clean device.",
         autoHandled: true),
     "BEACON": Kind(id: "beacon_file", title: "Infection marker file", severity: "high", scope: "machine",
         why: "A small timestamp file the malware writes to mark this machine as infected.",
@@ -177,7 +177,7 @@ let KINDS: [String: Kind] = [
         fix: "Remove that entry from the lockfile and reinstall from the registry, then check the commit that added it.",
         autoHandled: false),
     "WORKFLOW": Kind(id: "ci_secret_exfiltration", title: "CI workflow that ships secrets out", severity: "critical", scope: "project",
-        why: "A GitHub Actions workflow dumps the repository's secrets or posts to a data-collection endpoint — how recent npm worms steal CI tokens and spread.",
+        why: "A GitHub Actions workflow dumps the repository's secrets or posts to a data-collection endpoint. That's how recent npm worms steal CI tokens and spread.",
         fix: "Delete the workflow, check who pushed it, and rotate every secret the repository has.",
         autoHandled: false),
     "BRANCH": Kind(id: "infected_branch", title: "Payload on a branch", severity: "high", scope: "project",
@@ -232,7 +232,7 @@ func resolveDir(_ raw: String) throws -> String {
     var isDir: ObjCBool = false
     guard fm.fileExists(atPath: path, isDirectory: &isDir) else { throw Failure("Path not found: \(path)") }
     if !isDir.boolValue { path = (path as NSString).deletingLastPathComponent }
-    guard path != "/" else { throw Failure("Refusing to scan the whole disk — pass a project folder.") }
+    guard path != "/" else { throw Failure("Refusing to scan the whole disk. Pass a project folder.") }
     return path
 }
 
@@ -440,6 +440,7 @@ func activity(limit: Int) -> [[String: Any]] {
             e["type"] = "scan"; e["quarantined"] = Int(message[q]) ?? 0; e["attention"] = Int(message[n]) ?? 0; e["log"] = String(message[l])
         }
         if let r = message.range(of: #"^INCIDENT INC-[0-9-]+"#, options: .regularExpression) { e["incident"] = String(message[r].dropFirst(9)) }
+        e["said"] = sayEvent(e)
         return e
     }
 }
@@ -497,7 +498,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
         let found = last["findings"] as? [[String: Any]] ?? []
         let branches = Set(attention.filter { $0["type"] as? String == "branch" }.compactMap { $0["id"] as? String }).count
         let clean = (last["clean"] as? Bool ?? false) || (!found.isEmpty && found.allSatisfy { $0["kind"] as? String == "infected_branch" })
-        var ls: [String: Any] = ["result": clean && branches > 0 ? "CLEAN — \(branches) INFECTED BRANCH\(branches == 1 ? "" : "ES")" : last["result"] ?? "unknown",
+        var ls: [String: Any] = ["result": clean && branches > 0 ? "CLEAN, \(branches) INFECTED BRANCH\(branches == 1 ? "" : "ES")" : last["result"] ?? "unknown",
                                  "clean": clean, "infected_branches": branches, "log": last["log"] ?? ""]
         if let t = last["time"] { ls["time"] = t }
         out["last_scan"] = ls
@@ -509,7 +510,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
                             "husky": rs.states.filter { $0 == "husky" }.count,
                             "custom_hooks": rs.states.filter { $0 == "custom_hooks" }.count]
     }
-    var summary = threats.isEmpty ? "Protected." : "\(threats.count) active threat\(threats.count == 1 ? "" : "s") — see active_threats[].remediation."
+    var summary = threats.isEmpty ? "Protected." : "\(threats.count) active threat\(threats.count == 1 ? "" : "s"). See active_threats[].remediation."
     if threats.isEmpty && !(protection["watcher"] as? Bool ?? false) { summary += " The real-time watcher is off (bastion_enable watcher turns it on)." }
     if last == nil { summary += " No scan has run yet." }
     out["autonomy"] = autonomy()
@@ -517,7 +518,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     if let i = currentIncident() {
         let brief = incidentBrief(i)
         out["incident"] = brief
-        summary += " Incident \(brief["id"] ?? "") is \(brief["status"] ?? "open") with \(brief["todos"] ?? 0) to-do(s) — bastion_incident has the report."
+        summary += " Incident \(brief["id"] ?? "") is \(brief["status"] ?? "open") with \(brief["todos"] ?? 0) to-do(s). bastion_incident has the report."
     } else { out["incident"] = NSNull() }
     out["summary"] = summary
     return out
@@ -583,7 +584,7 @@ func scan(paths: [String], fullHome: Bool, readOnly: Bool) throws -> [String: An
     }
     out["duration_ms"] = Int(Date().timeIntervalSince(started) * 1000)
     let n = (out["findings"] as? [Any])?.count ?? 0
-    out["summary"] = n == 0 ? "Clean — nothing found." : "\(n) finding\(n == 1 ? "" : "s"). Each has an explanation and remediation; known-malicious leftovers were quarantined unless read_only."
+    out["summary"] = n == 0 ? "Clean. Nothing found." : "\(n) finding\(n == 1 ? "" : "s"). Each has an explanation and remediation; known-malicious leftovers were quarantined unless read_only."
     return out
 }
 
@@ -642,7 +643,7 @@ func enable(_ f: Feature) throws -> [String: Any] {
         let on = agentLoaded(label)
         if on { logEvent("CHANGED: \(f.title) turned ON") }
         return ["feature": f.rawValue, "enabled": on, "changed": on,
-                "message": on ? "The \(f.title) is on." : "Couldn't start the \(f.title) — try its switch in the Bastion menu-bar app."]
+                "message": on ? "The \(f.title) is on." : "Couldn't start the \(f.title). Try its switch in the Bastion menu-bar app."]
     case .execGuard:
         if execGuardOn() { return ["feature": f.rawValue, "enabled": true, "changed": false, "message": "The execution guard is already on."] }
         _ = run("/bin/bash", [engine("harden.sh"), "install"], timeout: 20)

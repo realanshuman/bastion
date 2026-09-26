@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# guard.sh — runs scanner, auto-quarantines UNAMBIGUOUS artifacts, alerts on the rest.
+# guard.sh: runs scanner, auto-quarantines UNAMBIGUOUS artifacts, alerts on the rest.
 # Safe-by-design: it QUARANTINES (moves, never deletes) only artifacts that are never
 # legitimate (temp staging dirs, beacons, harvested loot, hidden ~/.node_module trees).
-# It NEVER edits your repo/config files — those are ALERT-ONLY so uncommitted work is never lost.
+# It NEVER edits your repo/config files. Those are ALERT-ONLY so uncommitted work is never lost.
 set -uo pipefail
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
 G="$HOME/.security-guard"
@@ -47,7 +47,7 @@ while IFS='|' read -r kind path detail; do
     CONFIG|SOURCE|SCRIPT|AUTORUN|DEPHOOK|DEPMAL|DEPURL|WORKFLOW|BRANCH)   # repo files → ALERT ONLY (never auto-edit)
       echo "  ALERT (needs manual fix, not auto-touched): $path [$detail]" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;
     PROCESS)
-      echo "  ALERT: loader process PID(s) $path running — kill manually: kill $path" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;
+      echo "  ALERT: loader process PID(s) $path running. Stop it by hand: kill $path" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;
     NETWORK)
       echo "  ALERT: live C2 connection to $path" >> "$LOG"; ALERTED=$((ALERTED+1)) ;;
   esac

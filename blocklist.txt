@@ -1,4 +1,4 @@
-# Bastion blocklist — known command-and-control (C2) indicators.
+# Bastion blocklist: known command-and-control (C2) indicators.
 # One IP address or hostname per line. Lines starting with # are comments.
 # Any process connecting to one of these is treated as a live threat.
 #

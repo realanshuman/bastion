@@ -1,4 +1,4 @@
-// attention.swift — what needs the user right now, and how to get it done.
+// attention.swift: what needs the user right now, and how to get it done.
 // One live list (threats, infected branches, open to-dos) that every view reads, fixes that run with one click,
 // the setup steps that are still open, and which AI agents are connected.
 import Foundation
@@ -31,7 +31,7 @@ func serverBranchGone(repo: String, branch: String, network: Bool) -> Bool? {
 
 // MARK: - The live list
 
-/// Infected branches as they are right now: the repos the last scan flagged, checked again (fast — verdicts are cached).
+/// Infected branches as they are right now: the repos the last scan flagged, checked again (fast: verdicts are cached).
 let LIVE_BRANCHES = Memo<[[String: Any]]>(ttl: 5)
 func liveBranchFindings() -> [[String: Any]] { LIVE_BRANCHES.get(computeLiveBranches) }
 private func computeLiveBranches() -> [[String: Any]] {
@@ -72,7 +72,7 @@ func needsYou(threats given: [[String: Any]]? = nil, network: Bool = false, deta
         return open.first { (($0["repos"] as? [[String: Any]]) ?? []).contains { $0["path"] as? String == repo } }?["id"] as? String
     }
 
-    // 1. threats — act now
+    // 1. threats: act now
     for f in given ?? liveThreats() {
         let path = f["path"] as? String ?? f["ip"] as? String ?? ""
         let kind = f["kind"] as? String ?? ""
@@ -95,7 +95,7 @@ func needsYou(threats given: [[String: Any]]? = nil, network: Bool = false, deta
         items.append(item)
     }
 
-    // 2. infected branches — dormant, or leftovers already gone from GitHub
+    // 2. infected branches: dormant, or leftovers already gone from GitHub
     if !detail {   // counts only (status): no proof or fix analysis
         var seen = Set<String>()
         var remotes: [String: [String]] = [:]
@@ -126,7 +126,7 @@ func needsYou(threats given: [[String: Any]]? = nil, network: Bool = false, deta
         fix["runnable"] = !(fix["risk"] as? String == "rewrites-nothing")
         switch fix["risk"] as? String ?? "" {
         case "commit": what = "Bastion already cleaned \(files.joined(separator: " and ")) in your working copy, but the infected version is still committed on \(branch)."
-        case "push": what = "\(ref) on the server still has the infected \(files.joined(separator: " and ")) — anyone who pulls it gets the malware."
+        case "push": what = "\(ref) on the server still has the infected \(files.joined(separator: " and ")). Anyone who pulls it gets the malware."
         default: break
         }
         var item: [String: Any] = ["id": stableID("branch|\(repo)|\(ref)"), "type": "branch", "danger": danger, "title": fix["title"] ?? "Clean \(branch)",
@@ -158,7 +158,7 @@ func needsYou(threats given: [[String: Any]]? = nil, network: Bool = false, deta
     return items.enumerated().sorted { (rank[$0.element["danger"] as? String ?? ""] ?? 9, $0.offset) < (rank[$1.element["danger"] as? String ?? ""] ?? 9, $1.offset) }.map(\.element)
 }
 
-/// act_now · clean_up · all_clear — the one answer every view shows
+/// act_now · clean_up · all_clear: the one answer every view shows
 func overallState(_ items: [[String: Any]]) -> String {
     items.contains { $0["danger"] as? String == "now" } ? "act_now" : items.isEmpty ? "all_clear" : "clean_up"
 }
@@ -169,19 +169,19 @@ func todosReport(network: Bool) -> [String: Any] {
     let summary: String
     switch state {
     case "act_now": summary = "Act now: \(items.filter { $0["danger"] as? String == "now" }.count) active threat(s)."
-    case "clean_up": summary = "\(items.count) thing\(items.count == 1 ? "" : "s") to clean up — nothing is running."
-    default: summary = "All clear — nothing needs you."
+    case "clean_up": summary = "\(items.count) thing\(items.count == 1 ? "" : "s") to clean up. Nothing is running."
+    default: summary = "All clear. Nothing needs you."
     }
     return ["state": state, "count": items.count, "items": items, "summary": summary]
 }
 
 // MARK: - Fixing an item
 
-/// Runs an item's fix — exactly the commands it shows. Anything beyond this Mac (GitHub) or that deletes needs --yes.
+/// Runs an item's fix: exactly the commands it shows. Anything beyond this Mac (GitHub) or that deletes needs --yes.
 func runFix(_ id: String, yes: Bool) throws -> [String: Any] {
     let items = needsYou()
     guard let item = items.first(where: { $0["id"] as? String == id }) else {
-        throw Failure("Nothing with id \(id) needs fixing — it may already be done. `bastion todos` shows what's left.")
+        throw Failure("Nothing with id \(id) needs fixing. It may already be done. `bastion todos` shows what's left.")
     }
     let fix = item["fix"] as? [String: Any] ?? [:]
     let cmds = (fix["commands"] as? [String] ?? []).filter { !$0.hasPrefix("#") }
@@ -203,7 +203,7 @@ func runFix(_ id: String, yes: Bool) throws -> [String: Any] {
     LIVE_BRANCHES.reset()   // look again, not at what this process saw before the fix
     let still = needsYou().contains { $0["id"] as? String == id }
     return ["id": id, "ok": ok && !still, "ran": cmds, "output": output, "title": title,
-            "message": ok ? (still ? "Ran it, but Bastion still sees the problem — see the output." : "Done: \(title).") : "It didn't work — see the output."]
+            "message": ok ? (still ? "Ran it, but Bastion still sees the problem. See the output." : "Done: \(title).") : "It didn't work. See the output."]
 }
 
 // MARK: - Setup that's still open
@@ -239,7 +239,7 @@ func agentsReport() -> [[String: Any]] {
 /// Adds Bastion to an agent's MCP config (a backup is kept). Claude Code rewrites its own config file, so it's connected with its CLI instead.
 func connectAgent(_ id: String) throws -> [String: Any] {
     guard let a = AGENT_DIRS.first(where: { $0.id == id }) else { throw Failure("Unknown agent \(id). Try: \(AGENT_DIRS.map(\.id).joined(separator: ", ")).") }
-    guard id != "claude" else { throw Failure("Claude Code keeps its MCP servers in a file it rewrites itself — connect it with: claude mcp add --scope user bastion -- \"\(engine("bin/bastion"))\" mcp") }
+    guard id != "claude" else { throw Failure("Claude Code keeps its MCP servers in a file it rewrites itself. Connect it with: claude mcp add --scope user bastion -- \"\(engine("bin/bastion"))\" mcp") }
     if mcpConnected(id) { return ["agent": id, "changed": false, "message": "\(a.name) is already connected."] }
     let bin = engine("bin/bastion")
     try? fm.createDirectory(atPath: (a.mcp as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -302,7 +302,7 @@ func nextSteps() -> [[String: Any]] {
         done: agents.contains(WATCH_LABEL), action: ["enable", "watcher"], bulk: true)
     add("schedule", "Turn on the scheduled scan", "Scans your repos at login and every 6 hours, so new infections don't wait for you.",
         done: agents.contains(SCAN_LABEL), action: ["enable", "schedule"], bulk: true)
-    add("exec_guard", "Turn on the execution guard", "npm, node, pnpm, yarn and bun refuse to start in an infected project — in any terminal.",
+    add("exec_guard", "Turn on the execution guard", "npm, node, pnpm, yarn and bun refuse to start in an infected project, in any terminal.",
         done: execGuardOn(), action: ["enable", "exec-guard"], bulk: true)
     add("auto_respond", "Let Bastion contain attacks on its own", "When it finds something, it takes the proven, reversible steps right away (with undo) instead of only reporting.",
         done: autonomy() == "contain", action: ["enable", "auto-respond"])
@@ -319,7 +319,7 @@ func nextSteps() -> [[String: Any]] {
     for a in agentsReport() where a["installed"] as? Bool == true {
         let id = a["id"] as? String ?? "", name = a["name"] as? String ?? ""
         if let hg = a["hard_guard"] as? Bool {
-            add("guard:" + id, "Hard-guard \(name)", "Blocks the agent's install, dev, build and test commands in an unsafe repo — enforced, not just asked.",
+            add("guard:" + id, "Hard-guard \(name)", "Blocks the agent's install, dev, build and test commands in an unsafe repo. Enforced, not just asked.",
                 done: hg, action: ["hooks", "install", id])
         }
         add("mcp:" + id, "Connect \(name) to Bastion", "The agent checks a repo with Bastion before it runs npm there, and can hand problems to Bastion.",

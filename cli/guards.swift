@@ -1,4 +1,4 @@
-// guards.swift — the dependency guard (lockfiles, node_modules, osv.dev), payloads on branches and in git history,
+// guards.swift: the dependency guard (lockfiles, node_modules, osv.dev), payloads on branches and in git history,
 // the agent hard-guard hooks for Claude Code and Cursor, and the Team PR guard workflow.
 import Foundation
 
@@ -86,7 +86,7 @@ func lockedPackages(_ dir: String) -> (lockfile: String?, packages: Set<Package>
     return (nil, [])
 }
 
-/// Installed packages (name + version from each node_modules package.json) — for projects without a lockfile.
+/// Installed packages (name + version from each node_modules package.json), for projects without a lockfile.
 func installedPackages(_ dir: String) -> Set<Package> {
     var out = Set<Package>()
     let list = run("/usr/bin/find", [dir + "/node_modules", "-maxdepth", "6", "-type", "f", "-name", "package.json"], timeout: 60).out
@@ -159,8 +159,8 @@ func depsReport(_ raw: String, online: Bool?, preinstall: Bool) throws -> [Strin
     out["findings"] = findings
     out["safe"] = findings.isEmpty
     out["summary"] = findings.isEmpty
-        ? "\(packages.count) packages — nothing suspicious" + (useOnline ? " (checked against osv.dev)." : ". Turn on the online check to compare exact versions with osv.dev.")
-        : "\(findings.count) dependency problem\(findings.count == 1 ? "" : "s") — see findings[].remediation."
+        ? "\(packages.count) packages, nothing suspicious" + (useOnline ? " (checked against osv.dev)." : ". Turn on the online check to compare exact versions with osv.dev.")
+        : "\(findings.count) dependency problem\(findings.count == 1 ? "" : "s"). See findings[].remediation."
     return out
 }
 
@@ -466,7 +466,7 @@ func hookVerdict(command: String, cwd: String) -> String? {
         guard let r = cachedCheck(dir), r["safe_to_run"] as? Bool == false else { continue }
         let problems = (r["findings"] as? [[String: Any]] ?? []).compactMap { f -> String? in
             guard let title = f["title"] as? String else { return nil }
-            return "\(title) — \(tilde(f["path"] as? String ?? ""))"
+            return "\(title): \(tilde(f["path"] as? String ?? ""))"
         }
         return "Bastion blocked this command: \(tilde(dir)) is not safe to run.\n" + problems.prefix(5).map { "• " + $0 }.joined(separator: "\n") +
             "\nDon't run install, dev, build or test here. Tell the user, and suggest `bastion respond \(shellPath(dir))` (or the bastion_respond tool) to investigate and contain it."
@@ -475,7 +475,7 @@ func hookVerdict(command: String, cwd: String) -> String? {
 }
 
 /// The hook entry point. Claude Code: exit 2 + stderr blocks; exit 0 with no output leaves the normal flow alone.
-/// Cursor: always answer with JSON — "allow" (which never skips the user's approval) or "deny" with reasons.
+/// Cursor: always answer with JSON: "allow" (which never skips the user's approval) or "deny" with reasons.
 func runHook(_ agent: String) -> Never {
     let input = FileHandle.standardInput.readDataToEndOfFile()
     let obj = (try? JSONSerialization.jsonObject(with: input) as? [String: Any]) ?? [:]
@@ -507,7 +507,7 @@ func setHook(_ agent: String, on: Bool) throws -> [String: Any] {
     var root: [String: Any] = [:]
     if let d = fm.contents(atPath: path), !d.isEmpty {
         guard let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
-            throw Failure("\(tilde(path)) isn't plain JSON, so Bastion won't touch it. Add the hook by hand — see the AI agents page.")
+            throw Failure("\(tilde(path)) isn't plain JSON, so Bastion won't touch it. Add the hook by hand from the AI agents page.")
         }
         root = o
     }
@@ -536,7 +536,7 @@ func setHook(_ agent: String, on: Bool) throws -> [String: Any] {
 // MARK: - Team PR guard
 
 let PR_GUARD_WORKFLOW = """
-# Bastion — fails a pull request that adds hidden malware to build configs, install hooks,
+# Bastion: fails a pull request that adds hidden malware to build configs, install hooks,
 # editor tasks, dependencies or CI workflows. https://github.com/realanshuman/bastion
 name: Bastion
 on:
@@ -573,7 +573,7 @@ func ciSetup(_ raw: String, write: Bool) throws -> [String: Any] {
         logEvent("CHANGED: PR guard workflow added to \(tilde(repo))")
     }
     return ["repo": repo, "workflow": path, "installed": already || written, "written": written, "yaml": PR_GUARD_WORKFLOW,
-            "next": already || written ? "Commit and push .github/workflows/bastion.yml — every pull request is checked from then on."
+            "next": already || written ? "Commit and push .github/workflows/bastion.yml. Every pull request is checked from then on."
                                        : "Run with --write to add .github/workflows/bastion.yml."]
 }
 
@@ -601,13 +601,13 @@ func hiddenCodeEvidence(_ data: Data) -> [String: Any] {
     return out
 }
 
-/// "Line 8 looks like “};”, but 2,000 spaces hide code off-screen — it starts at column 2003: global.o='1-183';…"
+/// "Line 8 looks like “};”, but 2,000 spaces hide code off-screen: it starts at column 2003: global.o='1-183';…"
 func evidenceSentence(_ ev: [String: Any]) -> String {
     guard let line = ev["line"] as? Int else { return "" }
     let snippet = (ev["snippet"] as? String).map { $0 + "…" } ?? ""
     if let pad = ev["padding"] as? Int, let col = ev["column"] as? Int {
         let visible = (ev["visible"] as? String ?? "").isEmpty ? "" : " looks like “\((ev["visible"] as? String ?? "").prefix(40))”, but"
-        return "Line \(line)\(visible) \(pad.formatted()) blank characters push hidden code off-screen — it starts at column \(col.formatted()): \(snippet)"
+        return "Line \(line)\(visible) \(pad.formatted()) blank characters push hidden code off-screen. It starts at column \(col.formatted()): \(snippet)"
     }
     if let col = ev["column"] as? Int { return "Line \(line), column \(col.formatted()): \(snippet)" }
     return "Line \(line) is \((ev["line_length"] as? Int ?? 0).formatted()) characters of obfuscated code."
@@ -679,28 +679,28 @@ func branchContext(repo: String, ref: String, files: [String]) -> [String: Any] 
     let upstreamIsCurrent = remote != nil && branch == current && worktreeClean
     if remote == nil && worktreeClean {
         title = "Commit the fix on \(branch)"
-        why = "Your working copy is already clean — Bastion removed the injected code. \(branch) still has the infected commit until you commit the fix."
+        why = "Your working copy is already clean: Bastion removed the injected code. \(branch) still has the infected commit until you commit the fix."
         cmds = ["git -C \(r) add -- " + files.map { "\"\($0)\"" }.joined(separator: " "), "git -C \(r) commit -m \"Remove injected code\""]
         risk = "commit"
     } else if upstreamIsCurrent, let remote {
         title = "Push the fix to \(ref)"
-        why = "Commit the cleaned file on your local \(branch) first, then push it — everyone who pulls \(ref) still gets the infected version until you do."
+        why = "Commit the cleaned file on your local \(branch) first, then push it. Everyone who pulls \(ref) gets the infected version until you do."
         cmds = ["git -C \(r) push \(remote) \(branch)"]
         risk = "push"
     } else if let remote, localClean, onlyInfectedDiffer {
         title = "Push your clean copy of \(branch)"
-        why = "Your local \(branch) is the same work without the injected code — it differs from the server only in the infected file\(files.count == 1 ? "" : "s"). Pushing it replaces the infected commit (rewrites \(branch)'s history on the server)."
+        why = "Your local \(branch) is the same work without the injected code. It differs from the server only in the infected file\(files.count == 1 ? "" : "s"). Pushing it replaces the infected commit (rewrites \(branch)'s history on the server)."
         cmds = ["git -C \(r) push --force-with-lease=\(branch):\(git(repo, ["rev-parse", "--short=12", ref])?.trimmed ?? ref) \(remote) \(branch)"]
         risk = "rewrites-history"
     } else if remote == nil, let up = git(repo, ["rev-parse", "-q", "--abbrev-ref", "\(branch)@{upstream}"])?.trimmed, !up.isEmpty,
               files.allSatisfy({ blobClean(repo, "\(up):\($0)") != false }),
               git(repo, ["merge-base", "--is-ancestor", "refs/heads/\(branch)", up]) != nil {
-        title = "Update your local \(branch) — the server copy is clean"
+        title = "Update your local \(branch) from the clean server copy"
         why = "Your local \(branch) is just behind \(up), which no longer has the injected code. Updating it doesn't switch branches or run anything."
         let parts = up.split(separator: "/", maxSplits: 1).map(String.init)
         cmds = [branch == current ? "git -C \(r) pull --ff-only" : "git -C \(r) fetch \(parts.first ?? "origin") \(parts.count == 2 ? parts[1] : branch):\(branch)"]
     } else if let remote, out["default_clean"] as? Bool == true {
-        title = "Delete the old branch \(branch) — \(defName) is clean"
+        title = "Delete the old branch \(branch)"
         why = "\(defName) doesn't have the injected code\((out["default_has_files"] as? Bool) == false ? " (the file isn't there at all)" : ""); only this branch still carries an old copy. If you still need the branch, fix the file on it instead."
         cmds = ["git -C \(r) push \(remote) --delete \(branch)"] + (localExists && branch != current ? ["git -C \(r) branch -D \(branch)"] : [])
         risk = "deletes-branch"

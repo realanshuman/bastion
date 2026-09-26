@@ -1,4 +1,4 @@
-# lib.sh — detection rules shared by scanner.sh, watcher.sh and the execution-guard shim.
+# lib.sh: detection rules shared by scanner.sh, watcher.sh and the execution-guard shim.
 # git-guard carries its own copy of the config rule (it is installed into repos); keep the two in sync.
 
 # Strong signs of the config-injection payload. A long line on its own is NOT one:
@@ -51,7 +51,7 @@ is_ignored_exact(){ [ -f "$BASTION_IGNORE" ] && grep -qxF "$1" "$BASTION_IGNORE"
 # entries of allowlist.txt / blocklist.txt (first word of each non-comment line)
 bastion_list(){ grep -vE '^[[:space:]]*(#|$)' "$HOME/.security-guard/$1" 2>/dev/null | awk '{ print $1 }'; }
 
-# "<command> <pid> <remote-ip>" for connections that are up or being opened — exact IPs, no ports or brackets
+# "<command> <pid> <remote-ip>" for connections that are up or being opened: exact IPs, no ports or brackets
 remote_peers(){
   lsof -nP -i 2>/dev/null | awk '/ESTABLISHED|SYN_SENT/ {
     if (split($0, a, "->") < 2) next

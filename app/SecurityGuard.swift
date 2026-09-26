@@ -18,7 +18,7 @@ func runTool(_ exe: String, _ args: [String]) -> String {
     return String(data: d, encoding: .utf8) ?? ""
 }
 
-/// Active-threat count from `bastion status` — the same answer an AI agent gets. nil if the CLI isn't installed.
+/// Active-threat count from `bastion status`: the same answer an AI agent gets. nil if the CLI isn't installed.
 func cliStatus(_ cli: String) -> [String: Any]? {
     guard FileManager.default.isExecutableFile(atPath: cli),
           let obj = try? JSONSerialization.jsonObject(with: Data(runTool(cli, ["status", "--fast", "--json"]).utf8)) as? [String: Any],
@@ -43,12 +43,13 @@ func agentConnected(_ home: String) -> Bool {
 final class GuardModel: ObservableObject {
     // fast status
     @Published var clean = true
-    @Published var lastScan = "—"
-    @Published var lastResult = "—"
+    @Published var lastScan = "never"
+    @Published var lastResult = ""
     @Published var quarantineCount = 0
     @Published var findings: [String] = []
     @Published var activeThreats = 0
     @Published var history: [String] = []
+    @Published var events: [[String: Any]] = []     // the same activity as the window, with Bastion's own sentence in "said"
     @Published var quarantineItems: [(name: String, path: String, when: String)] = []
     @Published var watcherOn = false
     @Published var scheduleOn = false
@@ -73,7 +74,7 @@ final class GuardModel: ObservableObject {
 
     let dir = HOME_DIR + "/.security-guard"
     let home = HOME_DIR
-    let version = "4.2.1"
+    let version = "5.0.0"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 
@@ -97,7 +98,7 @@ final class GuardModel: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let linked = agentConnected(home)
             let latest = runShell("ls -1t \(dir)/logs/scan-*.log 2>/dev/null | head -1").trimmingCharacters(in: .whitespacesAndNewlines)
-            var result = "—", scan = "—"
+            var result = "", scan = "never"
             if !latest.isEmpty {
                 let body = runShell("grep RESULT: '\(latest)' 2>/dev/null | head -1")
                 if !body.isEmpty { result = body.replacingOccurrences(of: "RESULT:", with: "").trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -121,9 +122,12 @@ final class GuardModel: ObservableObject {
             let w = runShell("launchctl list 2>/dev/null | grep -c com.bastion.guard.watcher").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
             let sc = runShell("launchctl list 2>/dev/null | grep -c com.bastion.guard.scan").trimmingCharacters(in: .whitespacesAndNewlines) != "0"
             let eg = runShell("bash '\(dir)/harden.sh' status 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines) == "on"
-            let resultClean = result.contains("CLEAN") || result == "—"
+            let resultClean = result.contains("CLEAN") || result.isEmpty
             var active = 0
             let cs = cliStatus(cli)
+            let evs = FileManager.default.isExecutableFile(atPath: cli)
+                ? ((try? JSONSerialization.jsonObject(with: Data(runTool(cli, ["activity", "-n", "4", "--json"]).utf8)) as? [String: Any])?["events"] as? [[String: Any]] ?? [])
+                : []
             let inc = cs?["incident"] as? [String: Any]
             let (incId, incStatus, incSummary, incTodos) = (inc?["id"] as? String ?? "", inc?["status"] as? String ?? "", inc?["summary"] as? String ?? "", inc?["todos"] as? Int ?? 0)
             let level = cs?["autonomy"] as? String ?? "contain"
@@ -135,10 +139,10 @@ final class GuardModel: ObservableObject {
                 if !resultClean { active += 1 }
             }
             let isClean = active == 0
-            let (res, when, items, threats) = (result, scan, qItems, active)   // immutable copies for the main actor
+            let (res, when, items, threats, recentEvents) = (result, scan, qItems, active, evs)   // immutable copies for the main actor
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    self.lastResult = res; self.lastScan = when; self.history = hist; self.findings = finds
+                    self.lastResult = res; self.lastScan = when; self.history = hist; self.findings = finds; self.events = recentEvents
                     self.quarantineCount = qCount; self.quarantineItems = items
                     self.watcherOn = w; self.scheduleOn = sc; self.executionGuardOn = eg; self.clean = isClean; self.activeThreats = threats
                     self.agentLinked = linked
@@ -244,77 +248,53 @@ final class GuardModel: ObservableObject {
     func openRepo() { NSWorkspace.shared.open(URL(string: "https://github.com/realanshuman/bastion")!) }
 }
 
-// MARK: - Design system
-// Linear-inspired dark: flat layered surfaces, hairline borders, tight SF Pro type, indigo accent.
-// Bastion keeps its own name and shield mark.
+// MARK: - Menu-bar icon
 
-extension Color {
-    init(hex: UInt32, alpha: Double = 1) {
-        self.init(.sRGB, red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255,
-                  blue: Double(hex & 0xFF) / 255, opacity: alpha)
-    }
-}
-
-enum DT {
-    static let bg       = Color(hex: 0x0E0F11)   // window and sidebar
-    static let panel    = Color(hex: 0x141518)   // inset content panel
-    static let surface  = Color(hex: 0x1A1B1E)   // cards, hovered rows
-    static let surface2 = Color(hex: 0x222327)   // group headers, selected rows, controls
-    static let border   = Color(hex: 0x2B2C31)
-    static let hairline = Color(hex: 0x1F2024)
-    static let text     = Color(hex: 0xEDEEF0)
-    static let dim      = Color(hex: 0x8A8D95)
-    static let faint    = Color(hex: 0x5D6068)
-    static let accent   = Color(hex: 0x5E6AD2)   // indigo: primary actions, selection, "contained"
-    static let green    = Color(hex: 0x4CB782)
-    static let blue     = Color(hex: 0x4EA7FC)
-    static let purple   = Color(hex: 0xA38BFA)
-    static let yellow   = Color(hex: 0xF2C94C)
-    static let orange   = Color(hex: 0xF2994A)
-    static let red      = Color(hex: 0xEB5757)
-}
-
-/// Interface text: SF Pro at Linear-like sizes
-func uiFont(_ size: CGFloat, _ w: Font.Weight = .regular) -> Font { .system(size: size, weight: w) }
-/// IDs, paths and commands
-func codeFont(_ size: CGFloat, _ w: Font.Weight = .regular) -> Font { .system(size: size, weight: w, design: .monospaced) }
-
-/// Switch in the accent colour. NSSwitch ignores .tint and turns grey when its window isn't key.
-struct ThemeSwitch: ToggleStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Button { configuration.isOn.toggle() } label: {
-            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
-                Capsule().fill(configuration.isOn ? DT.accent : DT.surface2)
-                    .overlay(Capsule().strokeBorder(configuration.isOn ? Color.clear : DT.border))
-                Circle().fill(Color.white).frame(width: 14, height: 14).padding(2)
-                    .shadow(color: .black.opacity(0.35), radius: 1, y: 0.5)
+/// The mark as a template image, so it takes the menu bar's colour. Something to clean up adds a dot; act now fills the
+/// shield and cuts an exclamation mark out of it.
+func menuBarIcon(_ state: String) -> NSImage {
+    let img = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+        let s: CGFloat = 16 / 24, o: CGFloat = 1
+        func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: o + x * s, y: o + y * s) }
+        let shield = NSBezierPath()
+        shield.move(to: p(12, 1.6)); shield.line(to: p(20.6, 4.6)); shield.line(to: p(20.6, 11.2))
+        shield.curve(to: p(12, 22.6), controlPoint1: p(20.6, 16.6), controlPoint2: p(17.1, 20.6))
+        shield.curve(to: p(3.4, 11.2), controlPoint1: p(6.9, 20.6), controlPoint2: p(3.4, 16.6))
+        shield.line(to: p(3.4, 4.6)); shield.close()
+        NSColor.black.setFill()
+        if state == "act_now" {
+            shield.fill()
+            ctx.setBlendMode(.clear)
+            NSBezierPath(roundedRect: NSRect(x: 8.1, y: 4.6, width: 1.8, height: 6.6), xRadius: 0.9, yRadius: 0.9).fill()
+            NSBezierPath(ovalIn: NSRect(x: 8.05, y: 12.3, width: 1.9, height: 1.9)).fill()
+            ctx.setBlendMode(.normal)
+        } else {
+            NSGraphicsContext.saveGraphicsState()
+            shield.addClip()
+            for (y, h) in [(0.0, 7.0), (8.35, 3.05), (12.75, 3.05), (17.15, 7.0)] as [(CGFloat, CGFloat)] {
+                NSRect(x: 0, y: o + y * s, width: 18, height: h * s).fill()
             }
-            .frame(width: 30, height: 18)
-            .animation(.spring(response: 0.22, dampingFraction: 0.85), value: configuration.isOn)
+            NSGraphicsContext.restoreGraphicsState()
+            if state == "clean_up" {
+                ctx.setBlendMode(.clear)
+                NSBezierPath(ovalIn: NSRect(x: 10.9, y: -0.1, width: 7.6, height: 7.6)).fill()
+                ctx.setBlendMode(.normal)
+                NSBezierPath(ovalIn: NSRect(x: 12.2, y: 1.2, width: 5, height: 5)).fill()
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityValue(configuration.isOn ? "on" : "off")
-        .accessibilityAddTraits(.isToggle)
+        return true
     }
+    img.isTemplate = true
+    img.accessibilityDescription = state == "act_now" ? "Bastion: act now" : state == "clean_up" ? "Bastion: something to clean up" : "Bastion: all clear"
+    return img
 }
 
-/// Bastion's mark: the shield on a rounded square, tinted by posture.
-struct BrandMark: View {
-    var size: CGFloat = 20
-    var tint: Color = DT.green
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                .fill(LinearGradient(colors: [tint, tint.opacity(0.62)], startPoint: .topLeading, endPoint: .bottomTrailing))
-            Image(systemName: "checkmark.shield.fill").font(.system(size: size * 0.56, weight: .bold)).foregroundStyle(.white)
-        }.frame(width: size, height: size)
-    }
-}
-
-// MARK: - Menu-bar panel (glanceable; the window holds the detail)
+// MARK: - Menu-bar panel (a glance; the window holds the detail)
 
 struct PanelView: View {
     @ObservedObject var model: GuardModel
+    @ObservedObject private var look = Appearance.shared
     @Environment(\.openWindow) private var openWindow
     @State private var ticker: Timer?
     private var tint: Color { model.state == "act_now" ? DT.red : model.state == "clean_up" ? DT.orange : DT.green }
@@ -322,10 +302,11 @@ struct PanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Rectangle().fill(DT.hairline).frame(height: 1)
+            Hairline()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     status
+                    ask
                     if model.needsYou > 0 { incident }
                     stats
                     scan
@@ -333,14 +314,14 @@ struct PanelView: View {
                     recent
                 }.padding(14)
             }
-            Rectangle().fill(DT.hairline).frame(height: 1)
+            Hairline()
             footer
         }
-        .frame(width: 360).frame(maxHeight: 660)
+        .frame(width: 360).frame(maxHeight: 690)
         .background(DT.panel)
-        .environment(\.colorScheme, .dark)
         .animation(.easeInOut(duration: 0.2), value: model.clean)
         .onAppear {
+            Appearance.shared.apply()
             model.refreshFast(); model.loadStats()
             ticker?.invalidate()
             ticker = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in Task { @MainActor in model.refreshFast() } }
@@ -348,35 +329,37 @@ struct PanelView: View {
         .onDisappear { ticker?.invalidate(); ticker = nil }
     }
 
-    private func openMain(_ pane: Pane, incident: String? = nil, needsYou: Bool = false) {
-        if needsYou { Router.shared.openNeedsYou() } else if let incident { Router.shared.open(incident: incident) } else { Router.shared.go(pane) }
+    private func openMain(_ pane: Pane, incident: String? = nil, needsYou: Bool = false, ask: Bool = false) {
+        if ask { Router.shared.askHome() }
+        else if needsYou { Router.shared.openNeedsYou() } else if let incident { Router.shared.open(incident: incident) } else { Router.shared.go(pane) }
         openWindow(id: "main")
         NSApp.activate(ignoringOtherApps: true)
     }
 
     private var header: some View {
         HStack(spacing: 8) {
-            BrandMark(size: 20, tint: tint)
+            BrandMark(size: 17)
             Text("Bastion").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
             Text("v\(model.version)").font(uiFont(11)).foregroundStyle(DT.faint)
             Spacer()
-            Button { openMain(.overview) } label: {
+            Button { openMain(.home) } label: {
                 HStack(spacing: 5) {
                     Text("Open").font(uiFont(12, .medium))
                     Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold))
-                }.foregroundStyle(DT.dim).padding(.horizontal, 8).frame(height: 24)
-                .background(DT.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(DT.border))
+                }.foregroundStyle(DT.text2).padding(.horizontal, 9).frame(height: 24)
+                .background(DT.surface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(DT.border))
             }.buttonStyle(.plain).help("Open the Bastion window")
         }.padding(.horizontal, 14).frame(height: 46)
     }
 
     private var status: some View {
         HStack(spacing: 12) {
-            BrandMark(size: 38, tint: tint).shadow(color: tint.opacity(0.35), radius: 6, y: 2)
+            AgentFace(tint: tint, size: 40, working: model.scanning)
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.state == "act_now" ? "Act now — \(max(model.activeThreats, 1)) active threat\(model.activeThreats == 1 ? "" : "s")"
-                     : model.state == "clean_up" ? "\(model.needsYou) thing\(model.needsYou == 1 ? "" : "s") to clean up" : "All clear")
+                Text(model.scanning ? "Checking your repositories…"
+                     : model.state == "act_now" ? "Act now: \(max(model.activeThreats, 1)) active threat\(model.activeThreats == 1 ? "" : "s")"
+                     : model.state == "clean_up" ? "\(model.needsYou) thing\(model.needsYou == 1 ? "" : "s") need\(model.needsYou == 1 ? "s" : "") you" : "Your code is clean")
                     .font(uiFont(15, .semibold)).foregroundStyle(DT.text)
                 Text((model.state == "act_now" ? "Something is running or about to" : "Nothing is running") + " · last scan \(model.lastScan)")
                     .font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
@@ -385,21 +368,37 @@ struct PanelView: View {
         }
     }
 
+    /// Straight to the Ask box in the window
+    private var ask: some View {
+        Button { openMain(.home, ask: true) } label: {
+            HStack(spacing: 8) {
+                BrandMark(size: 13, tint: DT.faint)
+                Text("Ask Bastion").font(uiFont(13)).foregroundStyle(DT.dim)
+                Spacer()
+                KeyCap(key: "⌘K")
+            }
+            .padding(.horizontal, 11).frame(height: 34)
+            .background(DT.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DT.border))
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
     private var incident: some View {
         Button { openMain(.incidents, needsYou: true) } label: {
             HStack(spacing: 10) {
-                PanelStatusDot(open: true)
+                DangerIcon(danger: model.state == "act_now" ? "now" : "dormant", size: 26)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.state == "act_now" ? "Needs you now" : "Needs you").font(uiFont(12.5, .semibold)).foregroundStyle(DT.text)
-                    Text("\(model.needsYou) item\(model.needsYou == 1 ? "" : "s") with proof and a fix" + (model.incidentId.isEmpty ? "" : " · \(model.incidentId)"))
-                        .font(uiFont(11)).foregroundStyle(DT.dim).lineLimit(1)
+                    Text(model.state == "act_now" ? "Needs you now" : "Needs you").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
+                    Text("\(model.needsYou) item\(model.needsYou == 1 ? "" : "s"), each with proof and a one-click fix")
+                        .font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.faint)
             }
             .padding(10).contentShape(Rectangle())
-            .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder((model.state == "act_now" ? DT.red : DT.orange).opacity(0.5)))
+            .background(DT.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(tint.opacity(0.5)))
         }.buttonStyle(.plain)
     }
 
@@ -411,34 +410,31 @@ struct PanelView: View {
             Rectangle().fill(DT.hairline).frame(width: 1)
             stat("\(model.quarantineCount)", "Quarantined", warn: model.quarantineCount > 0)
         }
-        .frame(height: 54)
-        .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
+        .frame(height: 56)
+        .background(DT.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DT.border))
     }
 
     private func stat(_ value: String, _ label: String, warn: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(uiFont(11)).foregroundStyle(DT.dim)
-            Text(value).font(uiFont(16, .semibold)).foregroundStyle(warn ? DT.orange : DT.text).contentTransition(.numericText())
+            Text(value).font(uiFont(15, .semibold)).monospacedDigit().foregroundStyle(warn ? DT.orange : DT.text).contentTransition(.numericText())
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
     }
 
     private var scan: some View {
-        HStack(spacing: 10) {
-            Button { model.scanNow(reposOnly: true) } label: {
-                HStack(spacing: 6) {
-                    if model.scanning { ProgressView().controlSize(.small).scaleEffect(0.7).tint(.white) } else { Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)) }
-                    Text(model.scanning ? "Scanning…" : "Scan now").font(uiFont(12.5, .semibold))
-                }
-                .foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 30)
-                .background(DT.accent.opacity(model.scanning ? 0.6 : 1), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            }.buttonStyle(.plain).disabled(model.scanning)
-        }
+        Button { model.scanNow(reposOnly: true) } label: {
+            HStack(spacing: 6) {
+                if model.scanning { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12) }
+                else { Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)) }
+                Text(model.scanning ? "Scanning…" : "Scan now")
+            }.frame(maxWidth: .infinity)
+        }.buttonStyle(PrimaryButton(large: true)).disabled(model.scanning)
     }
 
     private var protection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Protection").font(uiFont(11.5, .medium)).foregroundStyle(DT.faint)
+            Text("Protection").font(uiFont(12, .medium)).foregroundStyle(DT.dim)
             VStack(spacing: 0) {
                 toggleRow("Real-time watcher", on: model.watcherOn, busy: model.applying == "watcher") { model.toggleWatcher($0) }
                 divider
@@ -451,16 +447,16 @@ struct PanelView: View {
                     divider
                     Button { model.installGitGuard() } label: {
                         HStack {
-                            Text("Protect \(model.gitReposUnprotected) repo\(model.gitReposUnprotected == 1 ? "" : "s") on push").font(uiFont(12.5)).foregroundStyle(DT.orange)
+                            Text("Guard \(model.gitReposUnprotected) repo\(model.gitReposUnprotected == 1 ? "" : "s") on push").font(uiFont(13)).foregroundStyle(DT.orange)
                             Spacer()
                             if model.applying == "guard" { ProgressView().controlSize(.small).scaleEffect(0.6) }
                             else { Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.faint) }
-                        }.padding(.horizontal, 12).frame(height: 34).contentShape(Rectangle())
+                        }.padding(.horizontal, 12).frame(height: 36).contentShape(Rectangle())
                     }.buttonStyle(.plain).disabled(model.applying == "guard")
                 }
             }
-            .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
+            .background(DT.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DT.border))
         }
     }
 
@@ -468,37 +464,36 @@ struct PanelView: View {
 
     private func toggleRow(_ title: String, on: Bool, busy: Bool, _ set: @escaping (Bool) -> Void) -> some View {
         HStack {
-            Text(title).font(uiFont(12.5)).foregroundStyle(DT.text)
+            Text(title).font(uiFont(13)).foregroundStyle(DT.text)
             Spacer()
             if busy { ProgressView().controlSize(.small).scaleEffect(0.6) }
             Toggle(title, isOn: Binding(get: { on }, set: set)).labelsHidden().toggleStyle(ThemeSwitch())
-        }.padding(.horizontal, 12).frame(height: 34)
+        }.padding(.horizontal, 12).frame(height: 36)
     }
 
     private var recent: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Recent activity").font(uiFont(11.5, .medium)).foregroundStyle(DT.faint)
+                Text("Recent activity").font(uiFont(12, .medium)).foregroundStyle(DT.dim)
                 Spacer()
-                Button("View all") { openMain(.activity) }.buttonStyle(.plain).font(uiFont(11.5, .medium)).foregroundStyle(DT.dim)
+                LinkButton(title: "All") { openMain(.activity) }
             }
             VStack(alignment: .leading, spacing: 0) {
-                if model.history.isEmpty {
-                    Text("Nothing yet — all quiet.").font(uiFont(12)).foregroundStyle(DT.dim).padding(12)
+                if model.events.isEmpty {
+                    Text("Nothing yet. All quiet.").font(uiFont(12)).foregroundStyle(DT.dim).padding(12)
                 }
-                ForEach(Array(model.history.prefix(4).enumerated()), id: \.offset) { i, line in
+                ForEach(Array(model.events.prefix(4).enumerated()), id: \.offset) { i, e in
                     if i > 0 { divider }
-                    let parts = line.components(separatedBy: "  ")
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Circle().fill(line.contains("KILLED") ? DT.red : line.contains("QUARANTINED") || line.contains("ALERT") ? DT.orange : DT.faint).frame(width: 6, height: 6)
-                        Text(humanizeEvent(parts.dropFirst().joined(separator: "  ").trimmingCharacters(in: .whitespaces))).font(uiFont(12)).foregroundStyle(DT.text.opacity(0.9)).lineLimit(1)
+                        Circle().fill(eventStyle(e).tint).frame(width: 6, height: 6)
+                        Text(said(e)).font(uiFont(12)).foregroundStyle(DT.text2).lineLimit(1).help(said(e))
                         Spacer(minLength: 4)
-                        Text(ago(parts.first)).font(uiFont(11)).foregroundStyle(DT.faint)
-                    }.padding(.horizontal, 12).frame(height: 32)
+                        Text(ago(e["time"])).font(uiFont(11)).foregroundStyle(DT.faint)
+                    }.padding(.horizontal, 12).frame(height: 34)
                 }
             }
-            .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
+            .background(DT.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DT.border))
         }
     }
 
@@ -507,31 +502,65 @@ struct PanelView: View {
             Button("Logs") { model.reveal("\(model.dir)/logs") }
             Button("GitHub") { model.openRepo() }
             Spacer()
+            AppearanceSwitch()
             Button { model.refreshFast(); model.loadStats(force: true) } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
             Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Bastion")
         }
-        .buttonStyle(.plain).font(uiFont(11.5, .medium)).foregroundStyle(DT.dim)
-        .padding(.horizontal, 14).frame(height: 36)
+        .buttonStyle(.plain).font(uiFont(12, .medium)).foregroundStyle(DT.dim)
+        .padding(.horizontal, 14).frame(height: 40)
     }
 }
 
-private struct PanelStatusDot: View {
-    let open: Bool
-    var body: some View { StatusIcon(status: open ? "open" : "contained", size: 16) }
+extension Notification.Name { static let bastionShowWindow = Notification.Name("bastion.showWindow") }
+
+/// Opening Bastion yourself shows its window; when macOS starts it as a login item it stays in the menu bar.
+/// Opening it again while it runs brings the window back.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var showWindowAtLaunch = true
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        let e = NSAppleEventManager.shared().currentAppleEvent
+        let loginItem = e?.eventID == kAEOpenApplication && e?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        AppDelegate.showWindowAtLaunch = !loginItem
+        Appearance.shared.apply()
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NotificationCenter.default.post(name: .bastionShowWindow, object: nil)
+        return true
+    }
+}
+
+/// The menu-bar icon. It lives for the whole run, so it's also what opens the window when asked to.
+struct MenuBarLabel: View {
+    let state: String
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Image(nsImage: menuBarIcon(state))
+            .onAppear {
+                guard AppDelegate.showWindowAtLaunch else { return }
+                AppDelegate.showWindowAtLaunch = false
+                show()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .bastionShowWindow)) { _ in show() }
+    }
+    private func show() {
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
 }
 
 @main
 struct BastionApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = GuardModel()
     var body: some Scene {
         MenuBarExtra {
             PanelView(model: model)
         } label: {
-            Image(systemName: model.state == "all_clear" ? "checkmark.shield.fill" : model.state == "act_now" ? "exclamationmark.octagon.fill" : "exclamationmark.shield.fill")
+            MenuBarLabel(state: model.state)
         }.menuBarExtraStyle(.window)
         Window("Bastion", id: "main") { MainWindow() }
             .windowStyle(.hiddenTitleBar)
-            .defaultSize(width: 1180, height: 780)
+            .defaultSize(width: 1200, height: 800)
             .windowResizability(.contentMinSize)
     }
 }

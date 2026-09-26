@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# harden.sh — turn Bastion's execution guard on/off by putting the shims first on PATH.
+# harden.sh: turn Bastion's execution guard on/off by putting the shims first on PATH.
 set -uo pipefail
 SHIMS="$HOME/.security-guard/shims"
 RC="$HOME/.zshrc"

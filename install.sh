@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — set up Bastion background agents for the current user (fixed labels).
+# install.sh: set up Bastion background agents for the current user (fixed labels).
 # Usage:  install.sh            # scheduled scan + live watcher
 #         install.sh --scan     # scheduled 6h scan only
 #         install.sh --watch    # live watcher only

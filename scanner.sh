@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scanner.sh — structural + IOC scan for the config-injection supply-chain family.
+# scanner.sh: structural + IOC scan for the config-injection supply-chain family.
 # READ-ONLY. Prints one finding per line (KIND|target|detail); exit 0 = clean, 2 = findings.
 # Never executes inspected files.
 set -uo pipefail

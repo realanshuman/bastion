@@ -25,7 +25,7 @@ done <<< "$out"
 {
   echo "## 🛡 Bastion"
   if [ "$count" -eq 0 ]; then echo "No hidden malware in build configs, install hooks, dependencies, editor tasks or CI workflows."
-  else printf '**%s finding(s) — do not merge.**\n\n| What | File | Signs |\n| --- | --- | --- |\n%s' "$count" "$rows"; fi
+  else printf '**%s finding(s). Do not merge.**\n\n| What | File | Signs |\n| --- | --- | --- |\n%s' "$count" "$rows"; fi
 } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 [ "$count" -eq 0 ] && echo "Bastion: clean." && exit 0
 echo "Bastion: $count finding(s)." && exit 1

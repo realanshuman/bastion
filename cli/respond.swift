@@ -1,4 +1,4 @@
-// respond.swift — Bastion's autonomous responder: investigate → decide → act → verify → report.
+// respond.swift: Bastion's autonomous responder: investigate → decide → act → verify → report.
 // It only changes what it can prove: attacker code is removed from a file only when the result is
 // byte-identical to that file's last clean commit, and every change keeps an undo copy. Anything that
 // reaches beyond this Mac (commits, pushes, access, credential rotation) becomes a to-do for the developer.
@@ -186,7 +186,7 @@ func parseISO(_ s: Any?) -> Date? {
 }
 
 func humanTime(_ s: Any?) -> String {
-    guard let d = parseISO(s) else { return (s as? String) ?? "—" }
+    guard let d = parseISO(s) else { return (s as? String) ?? "unknown" }
     let f = DateFormatter(); f.dateFormat = "MMM d, HH:mm"
     return f.string(from: d)
 }
@@ -265,7 +265,7 @@ func buildCacheHit(_ repo: String) -> String? {
     return hit.isEmpty ? nil : hit
 }
 
-/// What the stealer goes after, as names only — Bastion never reads secret values.
+/// What the stealer goes after, as names only: Bastion never reads secret values.
 func secretsAtRisk(_ repos: [String]) -> [[String: String]] {
     var out: [[String: String]] = []
     for repo in repos {
@@ -423,7 +423,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
 
     let now = Date()
     let lastRun = parseISO(settings()["last_respond"])
-    // 1. OBSERVE — the scan that just ran (when a scan started this), or a fresh read-only scan; plus what the watcher did
+    // 1. OBSERVE: the scan that just ran (when a scan started this), or a fresh read-only scan; plus what the watcher did
     let found: [[String: Any]]
     if let log = fromLog, let m = (try? fm.attributesOfItem(atPath: log))?[.modificationDate] as? Date, Date().timeIntervalSince(m) < 600 {
         found = (parseScanLog(log)["findings"] as? [[String: Any]] ?? []).filter { $0["handled"] == nil }
@@ -443,7 +443,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
        let last = allIncidents().first, let known = last["branch_keys"] as? [String],
        Set(found.map(branchKey)).isSubset(of: Set(known)) {
         return ["status": "known", "mode": mode, "incident": last["id"] ?? "",
-                "summary": "Nothing new — these infected branches were already reported in \(last["id"] as? String ?? "an earlier incident")."]
+                "summary": "Nothing new. These infected branches were already reported in \(last["id"] as? String ?? "an earlier incident")."]
     }
 
     let existing = currentIncident()
@@ -473,7 +473,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
     timeline.append(["time": isoTime(now), "event": "Response started by \(who) (mode: \(mode))."])
     for r in reflexes { timeline.append(["time": r["time"] ?? "", "event": "Watcher: " + (r["event"] ?? "")]) }
 
-    // 2. INVESTIGATE + CONTAIN — repo by repo
+    // 2. INVESTIGATE + CONTAIN: repo by repo
     var grouped: [String: [[String: Any]]] = [:]
     for f in found where f["scope"] as? String == "project" {
         if let p = f["path"] as? String { grouped[f["kind"] as? String == "infected_branch" ? p : repoRoot(of: p), default: []].append(f) }
@@ -486,7 +486,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
             if kind == "infected_branch" { branches.append(["ref": f["ref"] ?? "", "file": f["file"] ?? "", "commit": f["commit"] ?? ""]); continue }
             if kind == "malicious_dependency" || kind == "known_malicious_package" {
                 deps.append(f)
-                signs.append("A malicious dependency is installed in \(tilde(repo)) — its install script ran when it was installed.")
+                signs.append("A malicious dependency is installed in \(tilde(repo)). Its install script ran when it was installed.")
                 if let pkg = maliciousPackageDir(f) {   // the installed package folder: moved aside, never deleted
                     if mode == "contain", let q = quarantine(pkg, reason: kind, batch: batch, keepOriginal: false) {
                         act("quarantine", pkg, "done", "Quarantined the malicious package \((pkg as NSString).lastPathComponent) from \(tilde(repo)).", ["stored_at": q])
@@ -546,7 +546,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
                         if let perms { try? fm.setAttributes([.posixPermissions: perms], ofItemAtPath: path) }
                         info["action"] = "restored"
                         act("restore_file", path, "done",
-                            "Removed the injected code from \(rel) — it now matches commit \(lc.commit.short) byte for byte (infected copy kept for undo).",
+                            "Removed the injected code from \(rel). It now matches commit \(lc.commit.short) byte for byte, and the infected copy is kept for undo.",
                             ["quarantined_copy": kept, "clean_commit": lc.commit.sha])
                     } else {
                         info["action"] = "proposed"
@@ -561,7 +561,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
             } else if let lc = lastClean {
                 info["action"] = "proposed"
                 act("restore_file", path, "proposed",
-                    "Restore \(rel) from commit \(lc.commit.short) — review first: the file has other changes besides the injected code.",
+                    "Restore \(rel) from commit \(lc.commit.short) after a review. The file has other changes besides the injected code.",
                     ["how": "git -C \(shellPath(repo)) diff \(lc.commit.sha) -- \"\(rel)\"\ngit -C \(shellPath(repo)) checkout \(lc.commit.sha) -- \"\(rel)\""])
             } else {
                 info["action"] = "proposed"
@@ -573,7 +573,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
                     if (try? stripped.text.write(toFile: copy, atomically: true, encoding: .utf8)) != nil { extra["suggested_copy"] = copy }
                 }
                 act("clean_file", path, "proposed",
-                    "Clean \(rel) by hand — git has no clean version of it." + (extra["suggested_copy"] != nil ? " Bastion saved a cleaned copy to compare with." : ""),
+                    "Clean \(rel) by hand. Git has no clean version of it." + (extra["suggested_copy"] != nil ? " Bastion saved a cleaned copy to compare with." : ""),
                     extra.merging(["how": "diff \(shellPath(path)) \(shellPath(extra["suggested_copy"] as? String ?? "<cleaned copy>"))"]) { a, _ in a })
             }
             files.append(info)
@@ -585,11 +585,11 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
                 let started = p.started?.timeIntervalSince1970 ?? 0
                 if mode == "contain", started >= since, kill(pid_t(p.pid), SIGKILL) == 0 {
                     act("stop_process", "\(p.name) pid \(p.pid)", "done",
-                        "Stopped \(p.name) (pid \(p.pid)) — it started in \(tilde(repo)) after the payload arrived, so it may have been running it.")
+                        "Stopped \(p.name) (pid \(p.pid)). It started in \(tilde(repo)) after the payload arrived, so it may have been running it.")
                 } else {
                     act("stop_process", "\(p.name) pid \(p.pid)", "proposed",
-                        "Restart \(p.name) (pid \(p.pid)) in \(tilde(repo)) once the fix is in — " +
-                        (started >= since ? "it may be running the payload." : "it started before the payload arrived, but restart it to be safe."),
+                        "Restart \(p.name) (pid \(p.pid)) in \(tilde(repo)) once the fix is in. " +
+                        (started >= since ? "It may be running the payload." : "It started before the payload arrived, but restart it to be safe."),
                         ["how": "kill \(p.pid)   # then start your dev server again"])
                 }
             }
@@ -601,7 +601,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
         entry["files"] = ((previous?["files"] as? [[String: Any]]) ?? []).filter { !newPaths.contains($0["path"] as? String ?? "") } + files
         if let hit = buildCacheHit(repo) {
             entry["build_cache"] = hit
-            signs.append("The payload is in the build cache of \(tilde(repo)) (\(tilde(hit))) — a dev server may have compiled it.")
+            signs.append("The payload is in the build cache of \(tilde(repo)) (\(tilde(hit))). A dev server may have compiled it.")
         }
         repoCases.removeAll { $0["path"] as? String == repo }
         repoCases.append(entry)
@@ -619,7 +619,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
         if grouped[p] == nil, covered.contains(where: { p == $0 || p.hasPrefix($0 + "/") }) { repoCases[i]["branches"] = [[String: Any]]() }
     }
 
-    // 3. MACHINE — leftovers, loaders and live connections
+    // 3. MACHINE: leftovers, loaders and live connections
     let machineFindings = found.filter { $0["scope"] as? String == "machine" }
     let commandLines = processColumn("args"), processNames = processColumn("ucomm")
     for f in machineFindings {
@@ -653,9 +653,9 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
             for peer in liveC2() where peer["ip"] as? String == ip {
                 let pid = peer["pid"] as? Int ?? 0, name = peer["process"] as? String ?? "?"
                 if mode == "contain", name.has(#"^(node|next|npm|npx|pnpm|yarn|bun|deno)"#), pid > 0, kill(pid_t(pid), SIGKILL) == 0 {
-                    act("kill", "\(name) pid \(pid)", "done", "Killed \(name) (pid \(pid)) — it was connected to the attacker server \(ip).")
+                    act("kill", "\(name) pid \(pid)", "done", "Killed \(name) (pid \(pid)). It was connected to the attacker server \(ip).")
                 } else {
-                    act("kill", "\(name) pid \(pid)", "proposed", "Quit \(name) (pid \(pid)) — it is connected to the attacker server \(ip).",
+                    act("kill", "\(name) pid \(pid)", "proposed", "Quit \(name) (pid \(pid)). It is connected to the attacker server \(ip).",
                         ["how": "kill \(pid)"])
                 }
             }
@@ -666,7 +666,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
         signs.append("Watcher, \(humanTime(r["time"])): \(r["event"] ?? "")")
     }
 
-    // 4. INDICATORS — block addresses found in the payload itself; anything doubtful stays a proposal
+    // 4. INDICATORS: block addresses found in the payload itself; anything doubtful stays a proposal
     let blocked = Set(listEntries("blocklist.txt")), allowed = Set(listEntries("allowlist.txt")), busy = ipsInUseByOthers()
     for i in indicators.indices where indicators[i]["status"] == nil {
         let v = indicators[i]["value"] as? String ?? "", source = indicators[i]["source"] as? String ?? ""
@@ -675,18 +675,18 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
         else if allowed.contains(v) { indicators[i]["status"] = "skipped"; indicators[i]["note"] = "on your allowlist" }
         else if isLocalAddress(v) { indicators[i]["status"] = "skipped"; indicators[i]["note"] = "local or private address" }
         else if busy.contains(v) {
-            indicators[i]["status"] = "proposed"; indicators[i]["note"] = "another app is connected to it — check before blocking"
-            act("block", v, "proposed", "Block \(v) (\(source)) — another app is connected to it, so check first.", ["how": "bastion block add \(v)"])
-        } else if mode == "contain", (try? addEntry("blocklist.txt", v, note: "auto-blocked by Bastion — \(id), \(source)")) == true {
+            indicators[i]["status"] = "proposed"; indicators[i]["note"] = "another app is connected to it, so check before blocking"
+            act("block", v, "proposed", "Block \(v) (\(source)) after a check. Another app is connected to it.", ["how": "bastion block add \(v)"])
+        } else if mode == "contain", (try? addEntry("blocklist.txt", v, note: "auto-blocked by Bastion: \(id), \(source)")) == true {
             indicators[i]["status"] = "blocked"
-            act("block", v, "done", "Blocked \(v) — found in the \(source).")
+            act("block", v, "done", "Blocked \(v), found in the \(source).")
         } else {
             indicators[i]["status"] = "proposed"
             act("block", v, "proposed", "Block \(v) (\(source)).", ["how": "bastion block add \(v)"])
         }
     }
 
-    // 5. WHO — the identity that planted it, and what else it touched
+    // 5. WHO: the identity that planted it, and what else it touched
     let own = ownGitEmail()
     var hunt = inc["hunt"] as? [[String: Any]] ?? []
     for r in repoCases {
@@ -698,7 +698,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
         }
     }
 
-    // 6. VERIFY — re-check each finding right now (no second full scan). Nothing changed means the scan is still current.
+    // 6. VERIFY: re-check each finding right now (no second full scan). Nothing changed means the scan is still current.
     let affected = repoCases.compactMap { $0["path"] as? String }.filter { fm.fileExists(atPath: $0) }
     let remaining = actedNow == 0 ? found : found.filter(stillThereNow)
     if actedNow > 0 {   // record the result as a scan log, so every view agrees
@@ -712,7 +712,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
         try? logText.write(toFile: verifyLog, atomically: true, encoding: .utf8)
     }
     timeline.append(["time": isoTime(Date()), "event": remaining.isEmpty ? "Verified: nothing is left." :
-        actedNow == 0 ? "Nothing to change automatically — \(remaining.count) problem(s) need you." : "Verified: \(remaining.count) problem(s) still need you."])
+        actedNow == 0 ? "Nothing to change automatically. \(remaining.count) problem(s) need you." : "Verified: \(remaining.count) problem(s) still need you."])
 
     // 7. REPORT
     let ranLevel: String = !machineFindings.isEmpty || reflexes.contains(where: { ($0["event"] ?? "").contains("KILLED") || ($0["event"] ?? "").contains("QUARANTINED") })
@@ -738,7 +738,7 @@ func respond(paths: [String], planOnly: Bool, trigger: String, wait: Bool, fromL
     let report = saveIncident(inc)
 
     logEvent("INCIDENT \(id) [\(inc["status"] ?? "")]: \(inc["summary"] as? String ?? "")")
-    // tell the user when something changed: a new incident, a new action, or a different outcome — not on every repeat scan
+    // tell the user when something changed: a new incident, a new action, or a different outcome, not on every repeat scan
     if existing == nil || actedNow > 0 || before != (inc["status"] as? String ?? "", inc["summary"] as? String ?? "") {
         notify((inc["summary"] as? String ?? "Bastion responded.") + " Open Bastion for the report.")
     }
@@ -778,7 +778,7 @@ func buildTodos(_ inc: [String: Any]) -> [[String: String]] {
         for f in files { for b in f["remote_branches"] as? [String] ?? [] where !pushed.contains(b) { pushed.append(b) } }
         if !pushed.isEmpty {
             todos.append(["title": "Clean the pushed branches of \(name)",
-                          "why": "\(pushed.joined(separator: ", ")) still carr\(pushed.count == 1 ? "ies" : "y") the bad commit — anyone who pulls \(pushed.count == 1 ? "it" : "them") gets the malware.",
+                          "why": "\(pushed.joined(separator: ", ")) still carr\(pushed.count == 1 ? "ies" : "y") the bad commit. Anyone who pulls \(pushed.count == 1 ? "it" : "them") gets the malware.",
                           "cmd": "# after committing the fix, push each branch you use\ngit -C \(shellPath(repo)) push\n# and delete the ones you don't\ngit -C \(shellPath(repo)) push <remote> --delete <branch>"])
         }
         // one to-do per infected branch, with proof and the fix that fits it
@@ -814,7 +814,7 @@ func buildTodos(_ inc: [String: Any]) -> [[String: String]] {
         let identity = h["identity"] as? String ?? ""
         if h["own"] as? Bool == true {
             todos.append(["title": "Check how your own git identity committed the payload",
-                          "why": "The bad commit is under your name (\(identity)) — someone used your machine, account or token, or copied your name.",
+                          "why": "The bad commit is under your name (\(identity)). Someone used your machine, account or token, or copied your name.",
                           "how": "Review recent pushes in your git host's audit log and rotate your git credentials."])
             continue
         }
@@ -834,11 +834,11 @@ func buildTodos(_ inc: [String: Any]) -> [[String: String]] {
     }
     let secrets = inc["secrets"] as? [[String: String]] ?? []
     if !secrets.isEmpty {
-        let list = secrets.map { "• \($0["what"] ?? "") — \($0["how"] ?? "")" }.joined(separator: "\n")
+        let list = secrets.map { "• \($0["what"] ?? ""): \($0["how"] ?? "")" }.joined(separator: "\n")
         switch inc["ran"] as? String ?? "no sign" {
-        case "yes": todos.append(["title": "Rotate the secrets that were on this Mac — from a clean device",
+        case "yes": todos.append(["title": "Rotate the secrets that were on this Mac, from a clean device",
                                   "why": "The payload ran here, and these are exactly what it steals.", "how": list])
-        case "possibly": todos.append(["title": "Rotate the secrets that were on this Mac — from a clean device",
+        case "possibly": todos.append(["title": "Rotate the secrets that were on this Mac, from a clean device",
                                        "why": "The payload may have run here.", "how": list])
         default: todos.append(["title": "If you ran dev, build or test in an affected repo, rotate these secrets",
                                "why": "Bastion found no sign the payload ran, but it runs the moment a dev server loads the file.", "how": list])
@@ -873,7 +873,7 @@ func buildSummary(_ inc: [String: Any]) -> String {
     let k = done("kill", "stop_process"); if k > 0 { did.append("stopped \(k) process\(k == 1 ? "" : "es")") }
     let q = done("quarantine"); if q > 0 { did.append("quarantined \(q) item\(q == 1 ? "" : "s")") }
     let b = done("block"); if b > 0 { did.append("blocked \(b) address\(b == 1 ? "" : "es")") }
-    // repos that still have something in this incident (a branch fixed since doesn't count) — all of them once it's resolved
+    // repos that still have something in this incident (a branch fixed since doesn't count): all of them once it's resolved
     let resolvedNow = inc["status"] as? String == "resolved"
     let repoList = (inc["repos"] as? [[String: Any]] ?? []).filter { r in
         resolvedNow || ["files", "hooks", "branches", "dependencies"].contains { !((r[$0] as? [Any]) ?? []).isEmpty } }
@@ -887,12 +887,12 @@ func buildSummary(_ inc: [String: Any]) -> String {
     let head: String
     switch inc["status"] as? String ?? "open" {
     case "contained" where onlyBranches && did.isEmpty:
-        head = "Found malware on \(branchRefs) branch\(branchRefs == 1 ? "" : "es") in \(repos) repo\(repos == 1 ? "" : "s") — nothing is running"
+        head = "Found malware on \(branchRefs) branch\(branchRefs == 1 ? "" : "es") in \(repos) repo\(repos == 1 ? "" : "s"). Nothing is running"
     case "contained": head = "Contained \(scope)"
     case "resolved": head = "Resolved \(scope)"
     default: head = "Found \(scope)"
     }
-    return head + (did.isEmpty ? "" : " — " + did.joined(separator: ", ")) + "." +
+    return head + (did.isEmpty ? "" : ": " + did.joined(separator: ", ")) + "." +
         (inc["status"] as? String == "resolved" || todos == 0 ? "" : " \(todos) thing\(todos == 1 ? "" : "s") for you to do.")
 }
 
@@ -906,11 +906,11 @@ func reportMarkdown(_ inc: [String: Any]) -> String {
         for f in r["files"] as? [[String: Any]] ?? [] {
             md += "- `\(f["rel"] as? String ?? "")` in `\(repo)` carries the payload (\(f["detail"] as? String ?? "")). "
             if let c = f["introduced_by"] as? [String: Any] {
-                md += "It arrived in commit `\(c["short"] as? String ?? "")` by **\(c["committer"] as? String ?? "") <\(c["committer_email"] as? String ?? "")>** on \(humanTime(c["date"])) — “\(c["subject"] as? String ?? "")”."
+                md += "It arrived in commit `\(c["short"] as? String ?? "")` by **\(c["committer"] as? String ?? "") <\(c["committer_email"] as? String ?? "")>** on \(humanTime(c["date"])): “\(c["subject"] as? String ?? "")”."
                 let branches = (f["branches"] as? [String] ?? []) + (f["remote_branches"] as? [String] ?? [])
                 if !branches.isEmpty { md += " Branches with it: \(branches.map { "`\($0)`" }.joined(separator: ", "))." }
             } else if f["tracked"] as? Bool == true {
-                md += "The change isn't committed — something on this Mac wrote it straight to disk."
+                md += "The change isn't committed. Something on this Mac wrote it straight to disk."
             } else { md += "The file isn't tracked by git." }
             md += "\n"
         }
@@ -931,7 +931,7 @@ func reportMarkdown(_ inc: [String: Any]) -> String {
     let actions = inc["actions"] as? [[String: Any]] ?? []
     let done = actions.filter { ["done", "undone"].contains($0["status"] as? String ?? "") }
     if done.isEmpty {
-        md += inc["mode"] as? String == "observe" ? "Nothing yet — Bastion is set to observe, so it only investigates and reports.\n"
+        md += inc["mode"] as? String == "observe" ? "Nothing yet. Bastion is set to observe, so it only investigates and reports.\n"
                                                   : "Nothing automatic was safe to do here.\n"
     }
     for a in done { md += "- \(a["status"] as? String == "undone" ? "↩︎ Undone:" : "✅") \(a["detail"] as? String ?? "")\n" }
@@ -941,7 +941,7 @@ func reportMarkdown(_ inc: [String: Any]) -> String {
     let resolved = inc["status"] as? String == "resolved"
     md += resolved ? "\n## Resolved\n\nMarked resolved on \(humanTime(inc["resolved"])).\n" : "\n## What you need to do\n\n"
     for (n, t) in (resolved ? [] : inc["todos"] as? [[String: String]] ?? []).enumerated() {
-        md += "\(n + 1). **\(t["title"] ?? "")** — \(t["why"] ?? "")\n"
+        md += "\(n + 1). **\(t["title"] ?? "")**: \(t["why"] ?? "")\n"
         if let how = t["how"], !how.isEmpty { md += how.split(separator: "\n").map { "   \($0)" }.joined(separator: "\n") + "\n" }
         if let cmd = t["cmd"], !cmd.isEmpty { md += "   ```\n" + cmd.split(separator: "\n").map { "   \($0)" }.joined(separator: "\n") + "\n   ```\n" }
     }
@@ -949,7 +949,7 @@ func reportMarkdown(_ inc: [String: Any]) -> String {
     if !indicators.isEmpty {
         md += "\n## Indicators\n\n| Indicator | Found in | Status |\n| --- | --- | --- |\n"
         for i in indicators {
-            md += "| `\(i["value"] as? String ?? "")` | \(i["source"] as? String ?? "") | \((i["status"] as? String ?? "").replacingOccurrences(of: "_", with: " "))\(i["note"].map { " — \($0)" } ?? "") |\n"
+            md += "| `\(i["value"] as? String ?? "")` | \(i["source"] as? String ?? "") | \((i["status"] as? String ?? "").replacingOccurrences(of: "_", with: " "))\(i["note"].map { " (\($0))" } ?? "") |\n"
         }
     }
     let hunt = (inc["hunt"] as? [[String: Any]] ?? []).filter { !(($0["repos"] as? [Any]) ?? []).isEmpty }
@@ -958,13 +958,13 @@ func reportMarkdown(_ inc: [String: Any]) -> String {
         for h in hunt {
             md += "**\(h["identity"] as? String ?? "")**\n"
             for r in h["repos"] as? [[String: Any]] ?? [] {
-                md += "- `\(tilde(r["repo"] as? String ?? ""))` — \(r["count"] as? Int ?? 0) commit(s): " +
+                md += "- `\(tilde(r["repo"] as? String ?? ""))`: \(r["count"] as? Int ?? 0) commit(s): " +
                     (r["commits"] as? [[String: Any]] ?? []).prefix(4).map { "`\($0["short"] as? String ?? "")` \($0["subject"] as? String ?? "")" }.joined(separator: "; ") + "\n"
             }
         }
     }
     md += "\n## Timeline\n\n"
-    for e in inc["timeline"] as? [[String: Any]] ?? [] { md += "- \(humanTime(e["time"])) — \(e["event"] as? String ?? "")\n" }
+    for e in inc["timeline"] as? [[String: Any]] ?? [] { md += "- \(humanTime(e["time"])): \(e["event"] as? String ?? "")\n" }
     return md
 }
 
@@ -1011,7 +1011,7 @@ func undoIncident(_ id: String) throws -> [String: Any] {
 /// Agents may block an address only when an incident ties it to malware on this Mac.
 func blockIndicator(_ ip: String, incident: String?) throws -> [String: Any] {
     guard ipFamily(ip) != nil else { throw Failure("\(ip) isn't an IP address.") }
-    guard !isLocalAddress(ip) else { throw Failure("\(ip) is a local or private address — blocking it would break local development.") }
+    guard !isLocalAddress(ip) else { throw Failure("\(ip) is a local or private address. Blocking it would break local development.") }
     guard !listEntries("allowlist.txt").contains(ip) else { throw Failure("\(ip) is on the user's allowlist; only they can change that.") }
     let pool = incident.flatMap(findIncident).map { [$0] } ?? allIncidents().filter { ($0["status"] as? String) != "resolved" }
     guard var inc = pool.first(where: { ($0["indicators"] as? [[String: Any]] ?? []).contains { $0["value"] as? String == ip } }) else {
@@ -1019,14 +1019,14 @@ func blockIndicator(_ ip: String, incident: String?) throws -> [String: Any] {
     }
     let id = inc["id"] as? String ?? ""
     if listEntries("blocklist.txt").contains(ip) { return ["ip": ip, "blocked": true, "changed": false, "evidence": id] }
-    _ = try addEntry("blocklist.txt", ip, note: "blocked by an AI agent — evidence: \(id)")
+    _ = try addEntry("blocklist.txt", ip, note: "blocked by an AI agent, evidence: \(id)")
     var indicators = inc["indicators"] as? [[String: Any]] ?? []
     for i in indicators.indices where indicators[i]["value"] as? String == ip { indicators[i]["status"] = "blocked" }
     inc["indicators"] = indicators
     inc["timeline"] = (inc["timeline"] as? [[String: Any]] ?? []) + [["time": isoTime(Date()), "event": "An AI agent blocked \(ip)."]]
     saveIncident(inc)
-    logEvent("CHANGED: blocklist — added \(ip) (AI agent, evidence \(id))")
-    notify("An AI agent blocked \(ip) — evidence: \(id).")
+    logEvent("CHANGED: added \(ip) to the blocklist (AI agent, evidence \(id))")
+    notify("An AI agent blocked \(ip). Evidence: \(id).")
     return ["ip": ip, "blocked": true, "changed": true, "evidence": id]
 }
 

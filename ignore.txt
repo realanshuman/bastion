@@ -1,7 +1,7 @@
-# Bastion ignore-list — files that legitimately contain the payload signature
+# Bastion ignore list: files that legitimately contain the payload signature
 # (documentation, tests, the detector itself). Matches are treated as benign
 # REFERENCES, not live threats. One path fragment per line.
-# Build configs are only skipped when their exact full path is listed here —
+# Build configs are only skipped when their exact full path is listed here,
 # a fragment like /docs/ never hides the config of a docs site.
 SECURITY_INCIDENT
 no-config-payload
