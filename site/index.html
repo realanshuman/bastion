@@ -4,267 +4,165 @@
 <title>Bastion</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Bastion stops malware hidden in your JavaScript projects — in build configs, install scripts and old branches — before npm runs it, and shows you the exact line and the fix. Free and open source for macOS.">
-<meta name="theme-color" content="#060607">
+<meta name="description" content="Bastion is a security agent for your Mac. It watches your JavaScript projects, stops hidden malware before it runs, and helps you fix it in one click. Free and open source.">
+<meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Bastion — stop hidden malware before it runs">
-<meta property="og:description" content="Finds code hidden 2,000 characters off-screen in your config files, install scripts and branches. Stops it, proves it, fixes it. Free and open source for macOS.">
+<meta property="og:title" content="Bastion — the security agent that keeps malware out of your code">
+<meta property="og:description" content="Watches your projects, stops hidden malware before it runs, and helps you fix it in one click. Free and open source for macOS.">
 <meta property="og:image" content="assets/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="apple-touch-icon" href="assets/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <style>
   :root {
-    color-scheme: dark;
-    --bg: #060607;
-    --surface: #0c0d0f;
-    --raised: #131417;
-    --line: rgba(255, 255, 255, 0.08);
-    --line-strong: rgba(255, 255, 255, 0.14);
-    --text: #f2f1ee;
-    --dim: #9a9da2;
-    --faint: #686b71;
-    --red: #ff5a5f;
-    --red-soft: rgba(255, 90, 95, 0.12);
-    --green: #5ad19a;
-    --amber: #f2a65a;
-    --display: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    color-scheme: light;
+    --bg: #ffffff;
+    --soft: #f5f6f5;
+    --ink: #0d0e10;
+    --ink-2: #33363b;
+    --muted: #686c73;
+    --line: #e8e9eb;
+    --green: #1c9a5b;
+    --green-soft: #e4f5eb;
+    --red: #e5484d;
+    --red-soft: #fdeceb;
     --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --gutter: clamp(16px, 4vw, 32px);
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 400 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
-    padding-inline: var(--gutter);
-    overflow-x: hidden;
-  }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased; padding-inline: var(--gutter); }
   a { color: inherit; }
-  code { font-family: var(--mono); font-size: 0.9em; }
   img { max-width: 100%; display: block; }
-  :focus-visible { outline: 2px solid var(--text); outline-offset: 3px; border-radius: 6px; }
+  code { font-family: var(--mono); font-size: 0.88em; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 8px; }
   .wrap { max-width: 1120px; margin-inline: auto; }
 
   /* nav */
-  .nav {
-    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
-    margin-inline: calc(var(--gutter) * -1); padding-inline: var(--gutter);
-    background: rgba(6, 6, 7, 0.74); backdrop-filter: saturate(140%) blur(14px); -webkit-backdrop-filter: saturate(140%) blur(14px);
-    border-bottom: 1px solid var(--line);
-  }
-  .nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
-  .brand { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-weight: 600; letter-spacing: -0.01em; }
-  .nav-links { display: flex; gap: 24px; margin-left: 6px; }
-  .nav-links a { color: var(--dim); text-decoration: none; font-size: 14px; }
-  .nav-links a:hover { color: var(--text); }
+  .nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; margin-inline: calc(var(--gutter) * -1); padding-inline: var(--gutter);
+    background: rgba(255, 255, 255, 0.82); backdrop-filter: saturate(160%) blur(12px); -webkit-backdrop-filter: saturate(160%) blur(12px); }
+  .nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .brand { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+  .brand .mark { width: 26px; height: 26px; border-radius: 8px; background: var(--ink); color: #fff; display: grid; place-items: center; }
+  .links { display: flex; gap: 26px; }
+  .links a { text-decoration: none; color: var(--muted); font-size: 15px; }
+  .links a:hover { color: var(--ink); }
   .spacer { flex: 1; }
-  .nav-actions { display: flex; gap: 10px; }
-  .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    height: 40px; padding-inline: 18px; border-radius: 999px;
-    font: 500 14px/1 var(--sans); text-decoration: none; white-space: nowrap; cursor: pointer;
-    border: 1px solid var(--line-strong); color: var(--text); background: transparent;
-    transition: background 0.15s ease, border-color 0.15s ease;
-  }
-  .btn:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.26); }
-  .btn.solid { background: var(--text); color: #0a0a0b; border-color: var(--text); }
-  .btn.solid:hover { background: #ffffff; }
-  .btn.small { height: 34px; padding-inline: 14px; font-size: 13.5px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding-inline: 20px; border-radius: 999px;
+    font: 500 15px/1 var(--sans); text-decoration: none; white-space: nowrap; border: 1px solid var(--line); background: #fff; color: var(--ink);
+    transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease; }
+  .btn:hover { border-color: #cfd1d4; }
+  .btn.dark { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .btn.dark:hover { background: #26282c; }
+  .btn:active { transform: translateY(1px); }
+  .btn.sm { height: 36px; padding-inline: 16px; font-size: 14px; }
 
   /* type */
-  h1, h2 {
-    font-family: var(--display); font-weight: 400; letter-spacing: -0.012em; margin: 0; text-wrap: balance;
-    background: linear-gradient(to right bottom, #ffffff 35%, rgba(255, 255, 255, 0.52));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  h1 { font-size: clamp(3.1rem, 7vw, 5.5rem); line-height: 0.98; padding-bottom: 0.06em; }
-  h2 { font-size: clamp(2.3rem, 4.8vw, 3.6rem); line-height: 1.04; padding-bottom: 0.06em; }
-  h1 em, h2 em { font-style: italic; }
-  h3 { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: -0.005em; }
-  .lede { color: var(--dim); font-size: clamp(1.02rem, 1.4vw, 1.14rem); max-width: 34em; margin: 0; text-wrap: pretty; }
-  .eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0; }
+  h1, h2, h3 { margin: 0; letter-spacing: -0.03em; text-wrap: balance; }
+  h1 { font-size: clamp(2.5rem, 6vw, 4.25rem); line-height: 1.02; font-weight: 600; }
+  h2 { font-size: clamp(2rem, 4vw, 3rem); line-height: 1.06; font-weight: 600; }
+  h3 { font-size: 1.15rem; line-height: 1.3; font-weight: 600; letter-spacing: -0.015em; }
+  p { margin: 0; }
+  .sub { color: var(--muted); font-size: clamp(1.05rem, 1.6vw, 1.25rem); max-width: 36em; text-wrap: pretty; }
+  .center { text-align: center; }
+  .center .sub { margin-inline: auto; }
 
-  section { padding-block: clamp(64px, 8.5vw, 112px); }
-  .rule { height: 1px; border: 0; margin: 0; background: linear-gradient(90deg, transparent, var(--line-strong) 20%, var(--line-strong) 80%, transparent); }
-  .head { display: grid; gap: 18px; margin-bottom: clamp(36px, 5vw, 56px); }
-  .head.center { text-align: center; justify-items: center; }
-  .head.center .lede { margin-inline: auto; }
+  section { padding-block: clamp(48px, 6.5vw, 88px); }
+  .head { display: grid; gap: 14px; margin-bottom: clamp(32px, 5vw, 52px); }
 
   /* hero */
-  .hero { position: relative; padding-block: clamp(56px, 8vw, 104px) clamp(56px, 8vw, 96px); isolation: isolate; }
-  .hero::before {
-    content: ""; position: absolute; inset: -60px -40px auto -40px; height: 640px; pointer-events: none; z-index: -1;
+  .hero { padding-block: 16px 0; }
+  .glow { border-radius: 32px; padding: clamp(48px, 8vw, 88px) clamp(20px, 5vw, 64px) 0; overflow: hidden; text-align: center;
     background:
-      radial-gradient(520px 280px at 74% 24%, rgba(255, 255, 255, 0.07), transparent 70%),
-      linear-gradient(118deg, transparent 44%, rgba(255, 255, 255, 0.035) 51%, transparent 58%);
-  }
-  .hero .wrap { display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
-  .hero-copy { display: grid; gap: 26px; justify-items: start; }
-  .badge {
-    display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 10px 4px 12px; border-radius: 999px;
-    border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.03);
-    font-size: 13px; color: var(--dim); text-decoration: none;
-  }
-  .badge b { color: var(--text); font-weight: 500; }
-  .badge:hover { border-color: rgba(255, 255, 255, 0.26); color: var(--text); }
-  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
-  .meta { margin: 0; color: var(--faint); font-size: 13.5px; display: flex; flex-wrap: wrap; gap: 4px 0; }
-  .meta span + span::before { content: "·"; margin-inline: 8px; }
+      radial-gradient(60% 55% at 18% 0%, #d9f4e4 0%, rgba(217, 244, 228, 0) 70%),
+      radial-gradient(55% 55% at 85% 5%, #dcebfb 0%, rgba(220, 235, 251, 0) 70%),
+      linear-gradient(180deg, #f7faf8 0%, #ffffff 78%); }
+  .pill { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding-inline: 12px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.8);
+    border: 1px solid var(--line); font-size: 14px; color: var(--ink-2); margin-bottom: 26px; }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+  .hero h1 { max-width: 14em; margin-inline: auto; }
+  .hero .sub { margin: 22px auto 0; }
+  .ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 34px; }
+  .small { margin-top: 18px; font-size: 14px; color: var(--muted); }
+  .window { margin: clamp(44px, 6vw, 64px) auto 0; max-width: 1040px; border-radius: 16px 16px 0 0; overflow: hidden; background: #0e0f11;
+    box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04), 0 30px 80px -30px rgba(16, 24, 20, 0.45); border: 1px solid rgba(0, 0, 0, 0.08); border-bottom: 0; }
+  .window .bar { height: 38px; display: flex; align-items: center; gap: 7px; padding-inline: 14px; background: #16171a; }
+  .window .bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a3b40; }
+  .window img { width: 100%; height: auto; aspect-ratio: 2360 / 1300; object-fit: cover; object-position: top; }
 
-  /* hero visual: a config that looks clean, and what Bastion sees in it */
-  .ide {
-    margin: 0; border: 1px solid var(--line-strong); border-radius: 14px; overflow: hidden;
-    background: linear-gradient(180deg, #0e0f11, #0a0b0c);
-    box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
-  }
-  .ide-top { display: flex; align-items: center; gap: 12px; height: 40px; padding-inline: 14px; border-bottom: 1px solid var(--line); }
-  .lights { display: inline-flex; gap: 7px; }
-  .lights i { width: 11px; height: 11px; border-radius: 50%; background: #2a2b2f; }
-  .ide-file { font: 400 12.5px/1 var(--mono); color: var(--faint); }
-  .ide-file b { color: var(--text); font-weight: 500; }
-  .ide-code { padding: 16px 0 18px; font: 400 13px/1.75 var(--mono); overflow: hidden; }
-  .ln { display: grid; grid-template-columns: 44px 1fr; white-space: pre; }
-  .ln .n { color: #45474d; text-align: right; padding-right: 16px; user-select: none; }
-  .ln .c { color: #d7d6d2; position: relative; }
-  .k { color: #c7a2ff; } .s { color: #9fd6a8; }
-  .ln.hit { background: linear-gradient(90deg, transparent, var(--red-soft) 35%); }
-  .ln.hit .n { color: var(--red); }
-  .trail { display: inline-block; vertical-align: middle; height: 0; width: calc(100% - 8.6em); margin-left: 8px;
-    border-top: 1px dashed rgba(255, 90, 95, 0.8); transform-origin: left; }
-  .offscreen { position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-    font: 500 11px/1 var(--mono); color: var(--red); background: #1a0d0e; border: 1px solid rgba(255, 90, 95, 0.4);
-    padding: 4px 7px; border-radius: 6px; }
-  .ide-panel { border-top: 1px solid var(--line); background: #08090a; padding: 14px 16px 16px; display: grid; gap: 12px; }
-  .panel-head { font-size: 12.5px; color: var(--dim); }
-  .panel-head b { color: var(--text); font-weight: 600; }
-  .problem { display: grid; grid-template-columns: 10px 1fr; gap: 10px; align-items: start; }
-  .problem .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); margin-top: 7px; box-shadow: 0 0 0 4px var(--red-soft); }
-  .problem p { margin: 0; }
-  .p-title { font-size: 14px; font-weight: 500; }
-  .p-code { font: 400 12.5px/1.6 var(--mono); color: var(--red); overflow-wrap: anywhere; }
-  .p-meta { font-size: 12.5px; color: var(--dim); }
-  .blocked { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--dim);
-    border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; background: var(--surface); }
-  .blocked .x { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--red); color: #1a0506; font: 700 10px/1 var(--sans); flex: none; }
-  .blocked code { color: var(--text); }
+  /* how it helps */
+  .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .step { display: grid; gap: 18px; align-content: start; }
+  .stage { height: 220px; border-radius: 20px; background: var(--soft); display: grid; place-items: center; padding: 22px; overflow: hidden; }
+  .step p { color: var(--muted); }
+  .step .num { font: 500 13px/1 var(--mono); color: var(--muted); }
+  .card { width: 100%; max-width: 290px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.25); padding: 14px; display: grid; gap: 10px; font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ok { width: 18px; height: 18px; border-radius: 50%; background: var(--green-soft); color: var(--green); display: grid; place-items: center; flex: none; }
+  .no { width: 18px; height: 18px; border-radius: 50%; background: var(--red-soft); color: var(--red); display: grid; place-items: center; flex: none; }
+  .tag { font-size: 12px; color: var(--muted); }
+  .term { font: 400 13px/1.7 var(--mono); background: #0e0f11; color: #e6e5e1; border-radius: 12px; padding: 14px 16px; width: 100%; max-width: 300px; box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.5); }
+  .term .dim { color: #7c8087; }
+  .term .red { color: #ff7478; }
+  .fixbtn { margin-left: auto; font-size: 12.5px; font-weight: 500; background: var(--ink); color: #fff; border-radius: 8px; padding: 6px 10px; white-space: nowrap; }
+  .muted-line { font-size: 12.5px; color: var(--muted); }
 
-  /* works with */
-  .with { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 26px; padding: 26px 0; margin: 0;
-    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); list-style: none;
-    font: 400 13px/1 var(--mono); color: var(--faint); }
-  .with li:first-child { color: var(--dim); }
-
-  /* where it hides */
-  .spots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); }
-  .spot { padding: 28px 28px 8px 0; display: grid; gap: 14px; align-content: start; min-width: 0; }
-  .spot + .spot { padding-left: 28px; border-left: 1px solid var(--line); }
-  .spot p { margin: 0; color: var(--dim); }
-  .file { display: flex; gap: 6px; flex-wrap: wrap; }
-  .file code { font-size: 12px; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; }
-  .snip { font: 400 12.5px/1.7 var(--mono); color: #cfcdc8; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
-  .snip .red { color: var(--red); }
-  .snip .mute { color: var(--faint); }
-
-  /* stops · proves · fixes */
-  .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-  .tile { border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, #0c0d0f, #08090a); overflow: hidden; display: grid; grid-template-rows: auto 1fr; min-width: 0; }
-  .tile .demo { padding: 20px; border-bottom: 1px solid var(--line); min-height: 200px; display: grid; align-content: center; gap: 10px;
-    background: radial-gradient(360px 160px at 50% 0%, rgba(255, 255, 255, 0.045), transparent 70%); min-width: 0; }
-  .tile .copy { padding: 20px 22px 24px; display: grid; gap: 8px; align-content: start; }
-  .tile .copy p { margin: 0; color: var(--dim); font-size: 15px; }
-  .term { font: 400 12.5px/1.75 var(--mono); color: #cfcdc8; white-space: pre-wrap; margin: 0; }
-  .term .pr { color: var(--faint); }
-  .term .no { color: var(--red); }
-  .term .ok { color: var(--green); }
-  .proof { font: 400 12.5px/1.65 var(--mono); color: #d9d7d2; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #060607; margin: 0; overflow-wrap: anywhere; }
-  .proof .red { color: var(--red); }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { font-size: 12px; color: var(--text); border: 1px solid var(--line-strong); border-radius: 7px; padding: 5px 9px; background: var(--raised); }
-  .fixes { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .fixes li { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px 9px 12px; background: #08090a; font-size: 13px; min-width: 0; }
-  .fixes li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fixes li b { flex: none; font-weight: 500; font-size: 12px; color: #0a0a0b; background: var(--text); border-radius: 7px; padding: 5px 9px; }
-  .fixes li.done { color: var(--faint); }
-  .fixes li.done span { text-decoration: line-through; }
-  .fixes li.done b { background: transparent; color: var(--green); padding-inline: 0; }
-
-  /* product shot */
-  .shot { margin: 0; border: 1px solid var(--line-strong); border-radius: 14px; overflow: hidden; background: #0e0f11;
-    box-shadow: 0 60px 160px -50px rgba(0, 0, 0, 0.95), 0 0 140px -60px rgba(255, 255, 255, 0.12); }
-  .shot .ide-top { background: #0b0c0e; }
-  .shot img { width: 100%; height: auto; aspect-ratio: 2360 / 1520; }
-  .notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 36px; }
-  .notes div { display: grid; gap: 8px; align-content: start; }
-  .notes p { margin: 0; color: var(--dim); font-size: 15px; }
-  .state { display: flex; gap: 6px; flex-wrap: wrap; }
-  .state span { font-size: 12px; border-radius: 999px; padding: 3px 9px; border: 1px solid var(--line); }
-  .state .g { color: var(--green); } .state .o { color: var(--amber); } .state .r { color: var(--red); }
+  /* the trick */
+  .trick { border-radius: 28px; background: #0e0f11; color: #f2f1ee; padding: clamp(28px, 5vw, 56px); display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: clamp(28px, 5vw, 56px); align-items: center; }
+  .trick h2 { color: #fff; }
+  .trick .sub { color: #a4a7ad; margin-top: 16px; }
+  .code { font: 400 14px/1.9 var(--mono); background: #16171a; border: 1px solid #26282c; border-radius: 16px; padding: 18px 0; overflow: hidden; }
+  .code .l { display: grid; grid-template-columns: 40px 1fr; white-space: pre; }
+  .code .n { color: #4b4e54; text-align: right; padding-right: 14px; }
+  .code .hit { background: linear-gradient(90deg, rgba(229, 72, 77, 0), rgba(229, 72, 77, 0.16) 30%); }
+  .code .hit .n { color: #ff7478; }
+  .gap { display: inline-block; vertical-align: middle; width: 36%; margin-inline: 10px; border-top: 1px dashed rgba(255, 116, 120, 0.7); position: relative; }
+  .gap b { position: absolute; left: 50%; top: -11px; transform: translateX(-50%); font: 500 11px/1 var(--mono); color: #ff7478; background: #2a1517; padding: 4px 7px; border-radius: 6px; }
+  .code .hidden { color: #ff7478; }
+  .found { margin: 14px 14px 0; display: flex; align-items: center; gap: 10px; background: #1d1f22; border-radius: 10px; padding: 10px 12px; font: 400 13px/1.4 var(--sans); color: #d7d6d2; white-space: normal; }
 
   /* developers */
-  .dev { border: 1px solid var(--line-strong); border-radius: 16px; overflow: hidden; background: #0a0b0c; max-width: 900px; margin-inline: auto; }
-  .tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); overflow-x: auto; }
-  .tab { flex: none; font: 500 13px/1 var(--sans); color: var(--dim); background: transparent; border: 1px solid transparent; border-radius: 9px; height: 34px; padding-inline: 14px; cursor: pointer; }
-  .tab:hover { color: var(--text); }
-  .tab[aria-selected="true"] { color: var(--text); background: var(--raised); border-color: var(--line); }
-  .panel { position: relative; }
-  .panel pre { margin: 0; padding: 22px 22px 26px; overflow-x: auto; font: 400 13.5px/1.8 var(--mono); color: #d4d2cd; }
-  .panel .cm { color: var(--faint); }
-  .panel .pr { color: var(--faint); user-select: none; }
-  .panel .st { color: #9fd6a8; }
-  .panel .ky { color: #c7a2ff; }
-  .panel .ok { color: var(--green); }
-  .panel .or { color: var(--amber); }
-  .copy-btn { position: absolute; top: 14px; right: 14px; background: #0a0b0c; }
+  .devs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .dev { border: 1px solid var(--line); border-radius: 20px; padding: 24px; display: grid; gap: 12px; align-content: start; }
+  .dev p { color: var(--muted); font-size: 15.5px; }
+  .dev pre { margin: 6px 0 0; font: 400 12.5px/1.7 var(--mono); background: var(--soft); border-radius: 10px; padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
+  .icon { width: 36px; height: 36px; border-radius: 10px; background: var(--soft); display: grid; place-items: center; color: var(--ink); }
 
-  /* principles */
-  .rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-  .rules div { padding: 28px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: grid; gap: 10px; align-content: start; }
-  .rules p { margin: 0; color: var(--dim); font-size: 15px; }
-  .rules svg { color: var(--text); opacity: 0.85; }
+  /* trust */
+  .trust { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; padding-top: 12px; }
+  .trust div { border-left: 1px solid var(--line); padding-left: 18px; display: grid; gap: 6px; }
+  .trust p { color: var(--muted); font-size: 15px; }
 
   /* end */
-  .end { text-align: center; }
-  .end .wrap { display: grid; justify-items: center; gap: 26px; }
-  .end h2 { font-size: clamp(2.6rem, 6vw, 4.6rem); }
-  .end .actions { justify-content: center; }
-  .fine { color: var(--faint); font-size: 13.5px; margin: 0; max-width: 40em; }
-  footer { border-top: 1px solid var(--line); padding-block: 28px 40px; }
-  footer .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; color: var(--faint); font-size: 13.5px; }
-  footer a { color: var(--dim); text-decoration: none; }
-  footer a:hover { color: var(--text); }
+  .end { border-radius: 32px; padding: clamp(48px, 8vw, 88px) 24px; text-align: center; display: grid; justify-items: center; gap: 18px;
+    background:
+      radial-gradient(55% 70% at 20% 100%, #d9f4e4 0%, rgba(217, 244, 228, 0) 70%),
+      radial-gradient(50% 70% at 85% 100%, #dcebfb 0%, rgba(220, 235, 251, 0) 70%), var(--soft); }
+  footer { padding-block: 36px 44px; }
+  footer .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 26px; color: var(--muted); font-size: 14px; }
+  footer a { text-decoration: none; color: var(--muted); }
+  footer a:hover { color: var(--ink); }
 
-  /* motion: one quiet moment — the dashed line runs out to where the code hides */
+  @media (max-width: 900px) {
+    .links { display: none; }
+    .steps, .devs { grid-template-columns: 1fr; }
+    .trick { grid-template-columns: 1fr; }
+    .trust { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 520px) {
+    .nav .btn:not(.dark) { display: none; }
+    .trust { grid-template-columns: 1fr; }
+    .code { font-size: 12px; }
+    .gap { width: 22%; }
+  }
   @media (prefers-reduced-motion: no-preference) {
-    .trail { animation: run 1.4s cubic-bezier(0.2, 0.7, 0.2, 1) 0.35s both; }
-    .offscreen { animation: glow 2.6s ease-in-out 1.7s infinite; }
-    .problem .dot { animation: beat 2.6s ease-in-out 1.7s infinite; }
-    @keyframes run { from { transform: scaleX(0.05); } to { transform: scaleX(1); } }
-    @keyframes glow { 50% { box-shadow: 0 0 0 5px rgba(255, 90, 95, 0.12); } }
-    @keyframes beat { 50% { box-shadow: 0 0 0 7px rgba(255, 90, 95, 0.05); } }
-  }
-
-  @media (max-width: 960px) {
-    .hero .wrap { grid-template-columns: 1fr; }
-    .nav-links { display: none; }
-    .trio, .notes { grid-template-columns: 1fr; }
-    .rules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .spots { grid-template-columns: 1fr; }
-    .spot, .spot + .spot { padding: 24px 0 8px; border-left: 0; }
-    .spot + .spot { border-top: 1px solid var(--line); }
-  }
-  @media (max-width: 560px) {
-    .rules { grid-template-columns: 1fr; }
-    .nav-actions .btn:not(.solid) { display: none; }
-    .ide-code { font-size: 11px; }
-    .ln { grid-template-columns: 30px 1fr; }
-    .ln .n { padding-right: 10px; }
-    .offscreen { right: 8px; }
-    .panel pre { font-size: 12px; padding: 60px 16px 20px; }
+    .gap { animation: stretch 1.6s cubic-bezier(0.2, 0.7, 0.2, 1) 0.4s both; transform-origin: left; }
+    @keyframes stretch { from { transform: scaleX(0.1); } to { transform: scaleX(1); } }
   }
 </style>
 </head>
@@ -273,314 +171,155 @@
 <header class="nav">
   <div class="wrap">
     <a class="brand" href="#top" aria-label="Bastion, back to top">
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.4l7.6 3v5.8c0 4.7-3.2 8.8-7.6 10.4-4.4-1.6-7.6-5.7-7.6-10.4V5.4l7.6-3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 12.1l2.4 2.4 4.7-4.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="mark"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.4 2.9v5.7c0 4.6-3.1 8.6-7.4 10.2-4.3-1.6-7.4-5.6-7.4-10.2V5.5L12 2.6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.7 12.2l2.3 2.3 4.4-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       Bastion
     </a>
-    <nav class="nav-links" aria-label="Sections">
-      <a href="#how">How it works</a>
-      <a href="#app">The app</a>
+    <nav class="links" aria-label="Sections">
+      <a href="#how">How it helps</a>
       <a href="#developers">Developers</a>
+      <a href="https://github.com/realanshuman/bastion">GitHub</a>
     </nav>
     <span class="spacer"></span>
-    <div class="nav-actions">
-      <a class="btn small" href="https://github.com/realanshuman/bastion">GitHub</a>
-      <a class="btn small solid" href="https://github.com/realanshuman/bastion/releases/latest">Download</a>
-    </div>
+    <a class="btn sm" href="https://github.com/realanshuman/bastion">Star on GitHub</a>
+    <a class="btn sm dark" href="https://github.com/realanshuman/bastion/releases/latest">Download</a>
   </div>
 </header>
 
 <main id="top">
   <section class="hero">
-    <div class="wrap">
-      <div class="hero-copy">
-        <a class="badge" href="https://github.com/realanshuman/bastion/releases/latest"><b>New in 4.2</b> Fixes in one click <span aria-hidden="true">→</span></a>
-        <h1>Stop hidden malware before it runs</h1>
-        <p class="lede">Attackers now hide code in the config files, install scripts and old branches of JavaScript projects — pushed 2,000 spaces off-screen, where no review looks. Bastion finds it, stops npm from running it, and shows you the exact line and the fix.</p>
-        <div class="actions">
-          <a class="btn solid" href="https://github.com/realanshuman/bastion/releases/latest">Download for macOS</a>
-          <a class="btn" href="#developers">For developers</a>
-        </div>
-        <p class="meta"><span>Free and open source</span><span>macOS 14 or later</span><span>Runs on your Mac</span></p>
+    <div class="wrap glow">
+      <span class="pill"><i aria-hidden="true"></i>Free and open source · for macOS</span>
+      <h1>The security agent that keeps malware out of your code</h1>
+      <p class="sub">Bastion watches your projects, stops hidden malware before it runs, and helps you fix it in one click.</p>
+      <div class="ctas">
+        <a class="btn dark" href="https://github.com/realanshuman/bastion/releases/latest">
+          <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.8-3-.8-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.5 1.3-2.6 0 0-2.5-1-2.5-3.8zM14.1 5.8c.6-.8 1.1-1.8 1-2.8-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.7-1 2.7 1 .1 2-.5 2.7-1.3z"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn" href="#developers">For developers</a>
       </div>
-
-      <figure class="ide" aria-label="A postcss config that looks clean. Bastion shows hidden code on line 8 at column 2,003 and blocks npm run dev.">
-        <div class="ide-top">
-          <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="ide-file"><b>postcss.config.js</b> · storefront</span>
-        </div>
-        <div class="ide-code" aria-hidden="true">
-          <div class="ln"><span class="n">1</span><span class="c"><span class="k">import</span> { createRequire } <span class="k">from</span> <span class="s">'module'</span>;</span></div>
-          <div class="ln"><span class="n">2</span><span class="c"><span class="k">const</span> require = createRequire(<span class="k">import</span>.meta.url);</span></div>
-          <div class="ln"><span class="n">3</span><span class="c"><span class="k">export default</span> {</span></div>
-          <div class="ln"><span class="n">4</span><span class="c">  plugins: {</span></div>
-          <div class="ln"><span class="n">5</span><span class="c">    tailwindcss: {},</span></div>
-          <div class="ln"><span class="n">6</span><span class="c">    autoprefixer: {},</span></div>
-          <div class="ln"><span class="n">7</span><span class="c">  },</span></div>
-          <div class="ln hit"><span class="n">8</span><span class="c">};<span class="trail"></span><span class="offscreen">2,000 spaces →</span></span></div>
-        </div>
-        <div class="ide-panel">
-          <div class="panel-head"><b>Bastion</b> found 1 problem</div>
-          <div class="problem">
-            <span class="dot" aria-hidden="true"></span>
-            <div>
-              <p class="p-title">Hidden code on line 8, at column 2,003</p>
-              <p class="p-code">global.o='1-183';var _$_d8bf=(function(i,p){var k=i.length;var l=[];…</p>
-              <p class="p-meta">2,000 blank characters push it off-screen. It runs the moment a dev server loads this file.</p>
-            </div>
-          </div>
-          <div class="blocked"><span class="x" aria-hidden="true">✕</span><span>Blocked <code>npm run dev</code> in storefront</span></div>
-        </div>
-      </figure>
-    </div>
-  </section>
-
-  <div class="wrap">
-    <ul class="with" aria-label="Works with">
-      <li>Works with</li><li>npm</li><li>pnpm</li><li>yarn</li><li>bun</li><li>Next.js</li><li>Vite</li><li>Tailwind</li><li>Claude Code</li><li>Cursor</li><li>GitHub Actions</li>
-    </ul>
-  </div>
-
-  <section id="where">
-    <div class="wrap">
-      <div class="head">
-        <p class="eyebrow">Where it hides</p>
-        <h2>In the files nobody <em>reads</em></h2>
-        <p class="lede">These files run code the moment you use your project the normal way, and they're the last place anyone looks during a review.</p>
-      </div>
-      <div class="spots">
-        <div class="spot">
-          <div class="file"><code>postcss.config.js</code><code>vite.config.ts</code><code>next.config.mjs</code></div>
-          <h3>Build configs</h3>
-          <p>Run the moment you type <code>npm run dev</code>, <code>build</code> or <code>test</code>.</p>
-          <pre class="snip">};<span class="mute">  ··· 2,000 spaces ···  </span><span class="red">global.o='1-183';…</span></pre>
-        </div>
-        <div class="spot">
-          <div class="file"><code>package.json</code><code>node_modules</code></div>
-          <h3>Install scripts</h3>
-          <p>Run on <code>npm install</code>, in your project or in a package deep inside <code>node_modules</code>.</p>
-          <pre class="snip">"postinstall": <span class="red">"node setup_bun.js"</span></pre>
-        </div>
-        <div class="spot">
-          <div class="file"><code>origin/release/1.4</code><code>.github/workflows</code></div>
-          <h3>Old branches and CI</h3>
-          <p>Wait on a branch nobody deleted until someone checks it out, or ship your secrets out from CI.</p>
-          <pre class="snip"><span class="mute">$</span> git switch release/1.4</pre>
-        </div>
+      <p class="small">Works with npm, pnpm, yarn and bun · macOS 14 or later</p>
+      <div class="window">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <img src="assets/needs-you.jpg" width="2360" height="1520" alt="The Bastion app showing what needs you: in the storefront project, Commit the fix on main and Push the fix to origin/main, each with proof of where the hidden code is and a fix button.">
       </div>
     </div>
   </section>
-
-  <hr class="rule">
 
   <section id="how">
     <div class="wrap">
-      <div class="head">
-        <p class="eyebrow">How Bastion protects you</p>
-        <h2>Stops it. Proves it. <em>Fixes it.</em></h2>
+      <div class="head center">
+        <h2>An agent that has your back</h2>
+        <p class="sub">You keep coding. Bastion works quietly in the background and only speaks up when something needs you.</p>
       </div>
-      <div class="trio">
-        <article class="tile">
-          <div class="demo">
-            <pre class="term"><span class="pr">$</span> npm run dev
-<span class="no">✕ blocked</span> — injected build config in postcss.config.js
-<span class="pr">$</span> git push
-<span class="no">✕ blocked</span> — payload in a pushed commit
-<span class="pr">$</span> bastion check &amp;&amp; npm install
-<span class="ok">✓ safe to run on main</span></pre>
+      <div class="steps">
+        <article class="step">
+          <div class="stage" aria-hidden="true">
+            <div class="card">
+              <div class="row"><span class="ok"><svg width="11" height="11" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">storefront</span><span class="tag">clean</span></div>
+              <div class="row"><span class="ok"><svg width="11" height="11" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">design-system</span><span class="tag">clean</span></div>
+              <div class="row"><span class="ok"><svg width="11" height="11" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">api</span><span class="tag">clean</span></div>
+              <p class="muted-line">15 repositories checked in 6 seconds</p>
+            </div>
           </div>
-          <div class="copy">
-            <h3>Stops it before it runs</h3>
-            <p>npm, pnpm, yarn and bun refuse to start in an infected project, git refuses to push one, and your AI agent is stopped too.</p>
-          </div>
+          <span class="num">01</span>
+          <h3>Watches your code</h3>
+          <p>It checks your projects, their branches and their packages in the background, around the clock.</p>
         </article>
-        <article class="tile">
-          <div class="demo">
-            <p class="proof">postcss.config.js: Line 8 looks like “};”, but 2,000 blank characters push hidden code off-screen. It starts at column 2,003: <span class="red">global.o='1-183';var _$_d8bf=…</span></p>
-            <div class="chips"><span class="chip">See it on GitHub</span><span class="chip">Copy command to see it</span></div>
+        <article class="step">
+          <div class="stage" aria-hidden="true">
+            <div class="term"><span class="dim">$</span> npm run dev<br><span class="red">✕ Blocked by Bastion</span><br><span class="dim">Hidden code in postcss.config.js</span></div>
           </div>
-          <div class="copy">
-            <h3>Proves every finding</h3>
-            <p>No vague alarms. Each finding names the line and column, links to it on GitHub, and gives you a command to see the hidden code yourself.</p>
-          </div>
+          <span class="num">02</span>
+          <h3>Stops malware before it runs</h3>
+          <p>If something is hidden in your project, npm won't start it, git won't push it, and your AI agent can't run it.</p>
         </article>
-        <article class="tile">
-          <div class="demo">
-            <ul class="fixes">
-              <li><span>Commit the fix on main</span><b>Commit fix…</b></li>
-              <li><span>Delete the old branch release/1.4 — main is clean</span><b>Delete branch…</b></li>
-              <li class="done"><span>Update your local main</span><b>✓ Fixed</b></li>
-            </ul>
+        <article class="step">
+          <div class="stage" aria-hidden="true">
+            <div class="card">
+              <div class="row"><span class="no"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 6v7M12 17.5v.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg></span><span class="name"><b>Commit the fix on main</b></span></div>
+              <p class="muted-line">Line 8, column 2,003 — hidden after 2,000 spaces</p>
+              <div class="row"><span class="tag">storefront</span><span class="fixbtn">Commit fix</span></div>
+            </div>
           </div>
-          <div class="copy">
-            <h3>Fixes it in one click</h3>
-            <p>Every problem comes with the fix that fits it. Anything that touches GitHub asks first, and every file Bastion cleans can be undone.</p>
-          </div>
+          <span class="num">03</span>
+          <h3>Helps you fix it</h3>
+          <p>You see exactly where the code hides and get the right fix, one click away. Nothing is ever deleted without you.</p>
         </article>
       </div>
     </div>
   </section>
 
-  <hr class="rule">
-
-  <section id="app">
-    <div class="wrap">
-      <div class="head">
-        <p class="eyebrow">The app</p>
-        <h2>Always know what needs you</h2>
-        <p class="lede">One status and one list. Each item says how dangerous it is right now, shows the proof, and has the fix. The list updates the moment you fix something.</p>
+  <section>
+    <div class="wrap trick">
+      <div>
+        <h2>It finds what your eyes can't</h2>
+        <p class="sub">Attackers hide their code after 2,000 spaces on an ordinary line of a config file. It looks clean in your editor and on GitHub, and it runs the moment you start your project. Bastion reads every character.</p>
       </div>
-      <figure class="shot">
-        <div class="ide-top"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span class="ide-file">Bastion</span></div>
-        <img src="assets/needs-you.jpg" width="2360" height="1520" loading="lazy" alt="The Bastion window on Incidents, Needs you: the storefront repo lists Commit the fix on main and Push the fix to origin/main, each with the proof line and a fix button.">
-      </figure>
-      <div class="notes">
-        <div>
-          <h3>One status, everywhere</h3>
-          <div class="state"><span class="g">All clear</span><span class="o">3 to clean up</span><span class="r">Act now</span></div>
-          <p>The same answer in the window, the menu bar and its icon.</p>
-        </div>
-        <div>
-          <h3>Proof, then the fix</h3>
-          <p>Where the code hides, whether it's running, and the one fix that fits: commit, push, update or delete.</p>
-        </div>
-        <div>
-          <h3>Next steps</h3>
-          <p>A short checklist turns on the protections you haven't yet, most of them in one click.</p>
-        </div>
+      <div class="code" role="img" aria-label="A config file whose last line looks like a closing brace. After 2,000 spaces, hidden code starts. Bastion flags it.">
+        <div class="l"><span class="n">5</span><span>    tailwindcss: {},</span></div>
+        <div class="l"><span class="n">6</span><span>    autoprefixer: {},</span></div>
+        <div class="l"><span class="n">7</span><span>  },</span></div>
+        <div class="l hit"><span class="n">8</span><span>};<span class="gap"><b>2,000 spaces</b></span><span class="hidden">global.o='1-183';var…</span></span></div>
+        <div class="found"><span class="no"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 6v7M12 17.5v.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg></span>Bastion found hidden code on line 8 and blocked <code>npm run dev</code>.</div>
       </div>
     </div>
   </section>
-
-  <hr class="rule">
 
   <section id="developers">
     <div class="wrap">
       <div class="head center">
-        <p class="eyebrow">For developers</p>
-        <h2>Fits how you <em>already</em> work</h2>
-        <p class="lede">A command line, an MCP server for your AI agent, a GitHub Action and git hooks. Use one, or all of them.</p>
+        <h2>Fits right into your workflow</h2>
+        <p class="sub">Use the app, or reach for the command line, your AI agent and GitHub. They all share the same brain.</p>
       </div>
-      <div class="dev">
-        <div class="tabs" role="tablist" aria-label="Ways to use Bastion">
-          <button class="tab" type="button" role="tab" id="tab-cli" aria-selected="true" aria-controls="p-cli">Terminal</button>
-          <button class="tab" type="button" role="tab" id="tab-agents" aria-selected="false" aria-controls="p-agents" tabindex="-1">AI agents</button>
-          <button class="tab" type="button" role="tab" id="tab-action" aria-selected="false" aria-controls="p-action" tabindex="-1">GitHub Action</button>
-          <button class="tab" type="button" role="tab" id="tab-hooks" aria-selected="false" aria-controls="p-hooks" tabindex="-1">Git hooks</button>
-        </div>
-        <div class="panel" role="tabpanel" id="p-cli" aria-labelledby="tab-cli">
-          <button class="btn small copy-btn" type="button" data-copy="bastion check &amp;&amp; npm install">Copy</button>
-<pre><span class="cm"># Is it safe to install and run here?</span>
-<span class="pr">$ </span>bastion check &amp;&amp; npm install
-<span class="ok">✓ safe to run on main</span>
-
-<span class="cm"># What needs me, with proof and the fix</span>
-<span class="pr">$ </span>bastion todos
-<span class="or">● dormant</span>  Delete the old branch release/1.4 — main is clean
-  proof: postcss.config.mjs: Line 8 looks like “};”, but 2,000 blank
-         characters push hidden code off-screen, from column 2,003
-  one step: bastion fix 3k9x2ab --yes</pre>
-        </div>
-        <div class="panel" role="tabpanel" id="p-agents" aria-labelledby="tab-agents" hidden>
-          <button class="btn small copy-btn" type="button" data-copy="claude mcp add --scope user bastion -- ~/.security-guard/bin/bastion mcp">Copy</button>
-<pre><span class="cm"># Claude Code: your agent checks a repo before it runs npm there</span>
-<span class="pr">$ </span>claude mcp add --scope user bastion -- ~/.security-guard/bin/bastion mcp
-
-<span class="cm"># Hard-guard: block install, dev, build and test in an unsafe repo</span>
-<span class="pr">$ </span>bastion hooks install claude   <span class="cm"># or cursor</span>
-
-<span class="cm"># Cursor, Claude Desktop, Windsurf and Codex: one command each</span>
-<span class="pr">$ </span>bastion connect cursor --write
-
-<span class="cm"># Agents can turn protection on, never off.</span></pre>
-        </div>
-        <div class="panel" role="tabpanel" id="p-action" aria-labelledby="tab-action" hidden>
-          <button class="btn small copy-btn" type="button" data-copy="- uses: realanshuman/bastion@v4">Copy</button>
-<pre><span class="cm"># .github/workflows/bastion.yml: fails a pull request that carries a payload</span>
-<span class="ky">name</span>: Bastion
-<span class="ky">on</span>: [pull_request]
-<span class="ky">jobs</span>:
-  <span class="ky">bastion</span>:
-    <span class="ky">runs-on</span>: ubuntu-latest
-    <span class="ky">steps</span>:
-      - <span class="ky">uses</span>: <span class="st">actions/checkout@v4</span>
-      - <span class="ky">uses</span>: <span class="st">realanshuman/bastion@v4</span></pre>
-        </div>
-        <div class="panel" role="tabpanel" id="p-hooks" aria-labelledby="tab-hooks" hidden>
-          <button class="btn small copy-btn" type="button" data-copy="bastion enable git-guard">Copy</button>
-<pre><span class="cm"># Refuse to push a commit that carries the payload, in every repo</span>
-<span class="pr">$ </span>bastion enable git-guard
-
-<span class="cm"># Repos that use husky get the check in .husky/pre-push</span>
-<span class="pr">$ </span>bastion enable git-guard --husky ~/code/storefront
-
-<span class="cm"># npm, node, pnpm, yarn and bun refuse to run in an infected project</span>
-<span class="pr">$ </span>bastion enable exec-guard</pre>
-        </div>
+      <div class="devs">
+        <article class="dev">
+          <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7l5 5-5 5M12.5 17H19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <h3>Command line</h3>
+          <p>Check a project before you install or run it.</p>
+          <pre>bastion check &amp;&amp; npm install</pre>
+        </article>
+        <article class="dev">
+          <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l1.6 4.1 4.1 1.6-4.1 1.6L12 15l-1.6-4.2-4.1-1.6 4.1-1.6L12 3.5zM18 14.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></span>
+          <h3>AI agents</h3>
+          <p>Claude Code, Cursor and Codex check with Bastion before they run npm, and can't turn it off.</p>
+          <pre>bastion hooks install claude</pre>
+        </article>
+        <article class="dev">
+          <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="6" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6.5" cy="18" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="17.5" cy="9" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.5 8.2v7.6M17.5 11.2c0 3-3.5 3.3-9.2 5.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+          <h3>GitHub</h3>
+          <p>Fail a pull request that carries hidden code, before it reaches main.</p>
+          <pre>uses: realanshuman/bastion@v4</pre>
+        </article>
       </div>
     </div>
   </section>
 
-  <hr class="rule">
-
-  <section id="principles">
-    <div class="wrap">
-      <div class="head">
-        <p class="eyebrow">Built to be trusted</p>
-        <h2>Careful by design</h2>
-      </div>
-      <div class="rules">
-        <div>
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          <h3>Proof, not alarms</h3>
-          <p>Every finding names the line and the column. If Bastion can't show you the code, it doesn't raise the alarm.</p>
-        </div>
-        <div>
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <h3>Nothing destructive</h3>
-          <p>Leftovers are quarantined, never deleted. Every file Bastion cleans has an undo.</p>
-        </div>
-        <div>
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-          <h3>Agents can't weaken it</h3>
-          <p>AI agents can turn protection on, never off. Lowering it is yours to do, and it's logged.</p>
-        </div>
-        <div>
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 19.5h6M12 16v3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          <h3>Runs on your Mac</h3>
-          <p>No account and no cloud. The optional online check sends package names and versions, never your code.</p>
-        </div>
-        <div>
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6L13 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-          <h3>Fast</h3>
-          <p>A full scan of 15 repositories takes about 6 seconds. Checking one project takes under a second.</p>
-        </div>
-        <div>
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 8L4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <h3>Open source</h3>
-          <p>MIT licensed. Every rule Bastion uses to decide is in the repository for you to read.</p>
-        </div>
-      </div>
+  <section style="padding-top: 0">
+    <div class="wrap trust">
+      <div><h3>Runs on your Mac</h3><p>No account and no cloud. Your code never leaves your computer.</p></div>
+      <div><h3>Never destructive</h3><p>Nothing is deleted. Every file Bastion cleans can be undone.</p></div>
+      <div><h3>Proof, not alarms</h3><p>Every warning shows the exact line and column.</p></div>
+      <div><h3>Open source</h3><p>Free and MIT licensed. Read every rule it uses.</p></div>
     </div>
   </section>
 
-  <hr class="rule">
-
-  <section class="end">
-    <div class="wrap">
-      <h2>Run npm without <em>the worry</em></h2>
-      <div class="actions">
-        <a class="btn solid" href="https://github.com/realanshuman/bastion/releases/latest">Download for macOS</a>
+  <section style="padding-top: 0">
+    <div class="wrap end">
+      <h2>Let Bastion watch your code</h2>
+      <p class="sub">Free for everyone. Set up in a minute.</p>
+      <div class="ctas" style="margin-top: 10px">
+        <a class="btn dark" href="https://github.com/realanshuman/bastion/releases/latest">Download for macOS</a>
         <a class="btn" href="https://github.com/realanshuman/bastion">View on GitHub</a>
       </div>
-      <p class="fine">Free for everyone. macOS 14 or later. Bastion is open source and self-signed, so the first time you open it, right-click the app and choose Open.</p>
+      <p class="small">macOS 14 or later. It's open source and self-signed, so the first time, right-click the app and choose Open.</p>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <a class="brand" href="#top"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.4l7.6 3v5.8c0 4.7-3.2 8.8-7.6 10.4-4.4-1.6-7.6-5.7-7.6-10.4V5.4l7.6-3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 12.1l2.4 2.4 4.7-4.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Bastion</a>
-    <span>Made for developers who run npm.</span>
+    <a class="brand" href="#top"><span class="mark"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.4 2.9v5.7c0 4.6-3.1 8.6-7.4 10.2-4.3-1.6-7.4-5.6-7.4-10.2V5.5L12 2.6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.7 12.2l2.3 2.3 4.4-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Bastion</a>
     <span class="spacer"></span>
     <a href="https://github.com/realanshuman/bastion">GitHub</a>
     <a href="https://github.com/realanshuman/bastion/releases">Releases</a>
@@ -588,40 +327,5 @@
     <a href="https://github.com/realanshuman/bastion/blob/main/LICENSE">MIT License</a>
   </div>
 </footer>
-
-<script>
-  // tabs: click, or the arrow keys
-  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-  function select(tab) {
-    tabs.forEach(t => {
-      const on = t === tab;
-      t.setAttribute('aria-selected', String(on));
-      t.tabIndex = on ? 0 : -1;
-      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
-    });
-  }
-  tabs.forEach((t, i) => {
-    t.addEventListener('click', () => select(t));
-    t.addEventListener('keydown', e => {
-      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-      const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
-      select(next); next.focus();
-    });
-  });
-  // copy buttons: fall back to selecting the text when the clipboard is refused
-  document.querySelectorAll('[data-copy]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const text = btn.getAttribute('data-copy');
-      try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
-      catch (e) {
-        const pre = btn.parentElement.querySelector('pre');
-        const range = document.createRange(); range.selectNodeContents(pre);
-        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-        btn.textContent = 'Selected';
-      }
-      setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
-    });
-  });
-</script>
 </body>
 </html>
