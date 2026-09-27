@@ -559,6 +559,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     else if let age, age > 72 { summary += " The last scan was \(Int(age / 24)) days ago." }
     out["autonomy"] = autonomy()
     out["osv"] = osvEnabled()
+    out["command_line"] = commandLineStatus()   // is `bastion` set up for new terminal windows
     if let i = currentIncident() {
         let brief = incidentBrief(i)
         out["incident"] = brief

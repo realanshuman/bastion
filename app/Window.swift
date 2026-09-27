@@ -225,6 +225,7 @@ final class AppStore: ObservableObject {
     @Published var agents: [JSON] = []         // which AI agents are connected (bastion agents)
     @Published var chat: [Exchange] = []       // questions and answers on Home
     @Published var sampleRepo: String?         // a repo to use in example questions
+    @Published var cliFlow: CommandLineFlow?   // "Install command-line tool" in progress (Terminal.swift)
     @Published var hideGetStarted = UserDefaults.standard.bool(forKey: "hideGetStarted") {
         didSet { UserDefaults.standard.set(hideGetStarted, forKey: "hideGetStarted") }
     }
@@ -513,6 +514,11 @@ struct MainWindow: View {
             Button("Cancel", role: .cancel) {}
         } message: { c in Text(c.message) }
         .sheet(item: $store.sheet) { ResultSheet(content: $0) { store.sheet = nil } }
+        .background {
+            Color.clear.sheet(isPresented: Binding(get: { store.cliFlow != nil }, set: { if !$0 { store.cliFlow = nil } })) {
+                CommandLineSheet(store: store)
+            }
+        }
         .onAppear {
             Appearance.shared.apply()
             store.refresh()
@@ -2039,6 +2045,9 @@ struct SettingsPage: View {
                         }.padding(.horizontal, 16).padding(.vertical, 12)
                     }
                 }
+                PageSection(title: "Command line", note: "Everything in this window also works in a terminal.") {
+                    RowGroup { CommandLineRow(store: store) }
+                }
                 PageSection(title: "Allowlist", note: "Your own servers. Never treated as a threat.") {
                     ListEditor(store: store, key: "allowlist", command: "allow", placeholder: "api.mycompany.com")
                 }
@@ -2142,6 +2151,11 @@ struct CommandPalette: View {
                 let now = store.protection[feature] as? Bool ?? false
                 store.setFeature(feature, title: title, on: !now)
             })
+        }
+        if store.commandLine["installed"] as? Bool != true {
+            list.append(Command(group: "Actions", title: "Install command-line tool", icon: "terminal") { store.installCommandLine() })
+        } else if store.commandLineIsOurs {
+            list.append(Command(group: "Actions", title: "Remove the bastion command from the terminal", icon: "terminal") { store.removeCommandLine() })
         }
         for (level, title) in [("contain", "Contain"), ("observe", "Observe"), ("off", "Off")] where level != store.autonomy {
             list.append(Command(group: "Actions", title: "Set auto-respond to \(title)", icon: "wand.and.stars") { store.setAutonomy(level) })

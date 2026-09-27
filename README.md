@@ -241,6 +241,12 @@ on its own. Commands still go through the agent's normal permission prompts.
 
 ## Command line
 
+To type plain `bastion` in a terminal, click **Install command-line tool** in Settings (or run
+`~/.security-guard/bin/bastion path install`). Bastion shows you the exact change first and only makes it after you
+say yes: a link in `~/.local/bin` when that folder is already on your PATH, otherwise three marked lines at the end of
+your shell's startup file (`~/.zshrc` for zsh) that add its folder to the end of PATH. **Remove** takes out only what
+it added.
+
 ```bash
 bastion status                  # is this Mac protected right now?
 bastion check                   # is it safe to run install/dev/build in this folder?
@@ -263,6 +269,7 @@ bastion ci-setup --write        # add the Team PR guard workflow to this repo
 bastion activity                # what Bastion caught or changed recently
 bastion enable watcher          # or schedule, exec-guard, git-guard, auto-respond; "disable" turns one off
 bastion allow add api.mycompany.com   # trust your own server
+bastion path                    # is the bastion command set up for new terminal windows? (install · remove)
 ```
 
 Add `--json` to any command for machine-readable output. Exit codes: `0` all good · `2` threats found ·

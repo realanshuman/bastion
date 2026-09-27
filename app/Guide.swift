@@ -199,8 +199,10 @@ struct GuidePage: View {
                            why: "Get anywhere in a couple of keystrokes.",
                            action: ("Try it", { withAnimation(.easeOut(duration: 0.12)) { Router.shared.palette = true } }))
                 DocFeature(icon: "terminal", title: "Command line",
-                           what: "Everything the app does also works in a terminal: bastion check, bastion scan, bastion todos and bastion fix. The command lives in ~/.security-guard/bin.",
-                           why: "Check a project before you install it, or use Bastion in your own scripts.")
+                           state: store.commandLine["installed"] as? Bool == true ? ("Set up", DT.green) : ("Not set up", nil),
+                           what: "Everything the app does also works in a terminal: bastion check, bastion scan, bastion todos and bastion fix. Setting it up shows you the exact change to your shell first, and asks.",
+                           why: "Check a project before you install it, or use Bastion in your own scripts.",
+                           action: store.commandLine["installed"] as? Bool == true ? nil : ("Install command-line tool", { store.installCommandLine() }))
             }
         }
     }

@@ -70,6 +70,8 @@ extension AppStore {
             if let f = a["feature"] as? String { setFeature(f, title: a["title"] as? String ?? f, on: false) }
         case "appearance":
             if let v = a["value"] as? String { Appearance.shared.mode = v }
+        case "cli_install": installCommandLine()   // the sheet shows the change and asks
+        case "cli_remove": removeCommandLine()
         default: break
         }
     }

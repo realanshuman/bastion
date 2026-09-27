@@ -109,6 +109,26 @@ func humanConnect(_ c: [String: Any]) {
     print("\n" + faint("Any other MCP client: a stdio server with command \"\(bin)\" and argument \"mcp\"."))
 }
 
+func humanPath(_ p: [String: Any]) {
+    let st = p["status"] as? [String: Any] ?? [:]
+    let how = st["how"] as? String ?? "none"
+    switch p["action"] as? String ?? "" {
+    case "none":
+        let place = how == "shell" || how == "link" ? "set up by Bastion in \(tilde(st["where"] as? String ?? "")) · bastion path remove takes it out" : tilde(p["found"] as? String ?? "")
+        print(good("✓ ") + "bastion works in new terminal windows" + faint("  (\(place))"))
+    case "link", "shell":
+        if how == "shell" || how == "link" {
+            print(warn("! ") + "Bastion set this up in \(tilde(st["where"] as? String ?? "")), but a new terminal window doesn't find bastion.")
+        } else {
+            print("bastion isn't on your PATH yet. " + faint("To set it up: \(tilde(ourCommand)) path install (it asks first)"))
+        }
+        print("\n" + (p["summary"] as? String ?? ""))
+        if let lines = p["lines"] as? [String] { print(""); lines.forEach { print("    " + $0) } }
+    default:
+        print(warn("! ") + (p["summary"] as? String ?? ""))
+    }
+}
+
 let HELP = """
 bastion \(VERSION): a guard against supply-chain malware in JavaScript projects
 
@@ -136,6 +156,7 @@ bastion \(VERSION): a guard against supply-chain malware in JavaScript projects
   bastion ci-setup [repo] [--write]   the Team PR guard GitHub Action
   bastion osv on|off              online malware check against osv.dev (sends package names + versions)
   bastion connect                 plug Bastion into Claude Code, Cursor, Codex…
+  bastion path [install|remove]   the bastion command in new terminal windows (shows the change, asks first)
   bastion mcp                     run as an MCP server over stdio (for AI agents)
 
 Add --json to any command for machine-readable output.
@@ -577,6 +598,21 @@ do {
         output(r, code: r["ok"] as? Bool ?? false ? 0 : 1) {
             let f = r["failures"] as? [String] ?? []
             print(f.isEmpty ? good("✓ detection rules pass") : bad("✗ \(f.count) rule check(s) failed:\n  ") + f.joined(separator: "\n  "))
+        }
+
+    case "path":
+        switch rest.first ?? "status" {
+        case "install":
+            let r = try installCommandLine()
+            output(r, code: r["ok"] as? Bool == false ? 1 : 0) { print((r["ok"] as? Bool == true ? good("✓ ") : warn("! ")) + (r["message"] as? String ?? "")) }
+        case "remove", "uninstall":
+            let r = try removeCommandLine()
+            output(r, code: r["ok"] as? Bool == false ? 1 : 0) { print((r["ok"] as? Bool == true ? good("✓ ") : warn("! ")) + (r["message"] as? String ?? "")) }
+        case "status":
+            let p = commandLinePlan()
+            output(p) { humanPath(p) }
+        default:
+            throw Failure("Usage: bastion path [install|remove]")
         }
 
     case "bootstrap":

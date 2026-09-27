@@ -64,4 +64,4 @@ if [ "$want_watch" = 1 ]; then
   launchctl load "$LA/$WATCH_LABEL.plist" && loaded="$loaded live-watcher"
 fi
 echo "Bastion agents active:$loaded"
-[ -x "$DEST/bin/bastion" ] && echo "CLI: $DEST/bin/bastion   ·   connect an AI agent: $DEST/bin/bastion connect"
+[ -x "$DEST/bin/bastion" ] && echo "CLI: $DEST/bin/bastion   ·   use it as plain \`bastion\`: $DEST/bin/bastion path install   ·   connect an AI agent: $DEST/bin/bastion connect"

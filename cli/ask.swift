@@ -221,7 +221,7 @@ private func reply(_ intent: String, _ answer: String, tone: String = "info", po
 }
 
 /// A next step. `kind` is what the app does (scan · check · fix · steps · step · run · open · ask · connect · copy · present ·
-/// feature_off · appearance); `command` is the same step for a terminal.
+/// feature_off · appearance · cli_install · cli_remove); `command` is the same step for a terminal.
 private func act(_ label: String, _ kind: String, _ extra: [String: Any] = [:], command: String? = nil) -> [String: Any] {
     var a: [String: Any] = ["label": label, "kind": kind]
     for (k, v) in extra { a[k] = v }
@@ -270,6 +270,7 @@ private func suggestions(except intent: String) -> [String] {
 private func route(_ q: Question) -> [String: Any] {
     if q.words.isEmpty { return answerStatus() }
     if q.words.allSatisfy(GREETINGS.contains) { return answerGreeting() }
+    if let r = answerCommandLine(q) { return r }
     if q.any(["help", "what can you do", "what do you do", "how do i use", "commands", "what can i ask", "how do you work", "how does this work"]) || q.raw == "?" {
         return answerHelp()
     }
@@ -308,6 +309,36 @@ private func route(_ q: Question) -> [String: Any] {
     if !loose.choices.isEmpty { return answerWhich(loose.choices) }
     return reply("unknown", "I'm not sure what you mean by “\(q.raw)”.",
                  points: ["I can check a repository, scan everything, tell you what needs you, explain anything I've said, or turn on protection."])
+}
+
+// MARK: The bastion command in a terminal
+
+/// "Install the command line tool", "how do I use bastion in my terminal". Never changes anything itself: the button shows
+/// the exact change and asks.
+private func answerCommandLine(_ q: Question) -> [String: Any]? {
+    let about = q.any(["command line", "command-line", "cli", "bastion command", "my path", "on path", "in path", "to path", "the path"])
+        || (q.has("terminal") && !q.any(["guard", "watcher", "npm", "node", "scan", "safe", "check"]))
+    guard about, q.any(["install", "set up", "setup", "add", "use", "put", "get", "how", "enable", "remove", "uninstall", "work", "works",
+                        "available", "run", "type"]) else { return nil }
+    let st = commandLineStatus()
+    let how = st["how"] as? String ?? "none", place = tilde(st["where"] as? String ?? "")
+    let full = tilde(ourCommand)
+    if q.any(["remove", "uninstall", "take out", "undo"]) {
+        guard how == "shell" || how == "link" else {
+            return reply("command_line", how == "manual" ? "You set up the bastion command yourself, in \(place). I leave that alone."
+                                                         : "The bastion command isn't set up in your terminal, so there's nothing to remove.")
+        }
+        return reply("command_line", "I can take the bastion command out of \(place). Only what I added, nothing else.",
+                     actions: [act("Remove it", "cli_remove", command: "\(full) path remove")])
+    }
+    if st["installed"] as? Bool == true {
+        return reply("command_line", "The bastion command already works in new terminal windows.", tone: "good",
+                     points: [how == "link" ? "Through a link at \(place)." : how == "shell" ? "I added it to \(place)." : "You set it up yourself, in \(place).",
+                              "Try: bastion status, bastion check, bastion scan."])
+    }
+    return reply("command_line", "I can set up the bastion command so it works in new terminal windows. I'll show you the exact change first, and nothing changes until you say yes.",
+                 actions: [act("Install command-line tool", "cli_install", command: "\(full) path install")],
+                 suggest: ["What can you do?", "Am I safe?"])
 }
 
 // MARK: Status
