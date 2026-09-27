@@ -202,7 +202,8 @@ struct GuidePage: View {
                            state: store.commandLine["installed"] as? Bool == true ? ("Set up", DT.green) : ("Not set up", nil),
                            what: "Everything the app does also works in a terminal: bastion check, bastion scan, bastion todos and bastion fix. Setting it up shows you the exact change to your shell first, and asks.",
                            why: "Check a project before you install it, or use Bastion in your own scripts.",
-                           action: store.commandLine["installed"] as? Bool == true ? nil : ("Install command-line tool", { store.installCommandLine() }))
+                           action: store.commandLine["installed"] as? Bool == true ? nil
+                               : (store.busy.contains("cli-check") ? "Checking…" : "Install command-line tool", { store.installCommandLine() }))
             }
         }
     }

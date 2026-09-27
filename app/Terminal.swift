@@ -3,10 +3,12 @@
 import SwiftUI
 import AppKit
 
+/// The sheet opens once the plan is known, so it opens at its final size. Its phases change WITHOUT withAnimation:
+/// macOS doesn't resize a sheet's window for an animated change, and the content would be clipped.
 struct CommandLineFlow {
-    enum Phase { case checking, plan, working, done }
-    var phase: Phase = .checking
-    var plan: JSON = [:]
+    enum Phase { case plan, working, done }
+    var phase: Phase = .plan
+    var plan: JSON
     var result: JSON = [:]
 }
 
@@ -16,23 +18,32 @@ extension AppStore {
     /// Bastion set it up (lines or a link), so Bastion can take it out again
     var commandLineIsOurs: Bool { !(commandLine["ours"] as? [Any] ?? []).isEmpty }
 
-    /// Opens the sheet and works out the change. Nothing changes until "Add".
+    /// Works out the change (a new login shell, usually well under a second), then opens the sheet showing it.
+    /// Nothing changes until "Add".
     func installCommandLine() {
-        withAnimation(.easeOut(duration: 0.15)) { cliFlow = CommandLineFlow() }
+        guard !busy.contains("cli-check"), cliFlow == nil else { return }
+        busy.insert("cli-check")
+        let wait = "Checking how your terminal starts…"
+        Task {   // a slow shell setup gets a word, a quick one doesn't flicker
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if busy.contains("cli-check") { flash(wait) }
+        }
         Task {
             let plan = await Task.detached(priority: .userInitiated) { Box(json: bastion(["path"])) }.value.json
-            guard cliFlow?.phase == .checking else { return }   // closed meanwhile
-            withAnimation(.easeOut(duration: 0.15)) { cliFlow?.plan = plan; cliFlow?.phase = .plan }
+            busy.remove("cli-check")
+            if toast == wait { toast = nil }
+            cliFlow = CommandLineFlow(plan: plan)
         }
     }
 
     /// The person pressed "Add": make exactly the change the sheet showed
     func confirmCommandLine() {
         guard cliFlow?.phase == .plan else { return }
-        withAnimation(.easeOut(duration: 0.15)) { cliFlow?.phase = .working }
+        cliFlow?.phase = .working
         Task {
             let r = await Task.detached(priority: .userInitiated) { Box(json: bastion(["path", "install", "--yes"])) }.value.json
-            withAnimation(.easeOut(duration: 0.15)) { cliFlow?.result = r; cliFlow?.phase = .done }
+            cliFlow?.result = r
+            cliFlow?.phase = .done
             refresh()
         }
     }
@@ -54,7 +65,7 @@ extension AppStore {
 
 struct CommandLineSheet: View {
     @ObservedObject var store: AppStore
-    private var flow: CommandLineFlow { store.cliFlow ?? CommandLineFlow() }
+    private var flow: CommandLineFlow { store.cliFlow ?? CommandLineFlow(plan: [:]) }
     private var plan: JSON { flow.plan }
     private var action: String { plan["error"] != nil ? "error" : plan["action"] as? String ?? "" }
     private var isLink: Bool { action == "link" }
@@ -77,7 +88,7 @@ struct CommandLineSheet: View {
     private var look: (icon: String, tint: Color, title: String, sub: String) {
         let intro = "Everything in this window also works in a terminal: bastion check, bastion scan, bastion fix and more."
         switch flow.phase {
-        case .checking, .working:
+        case .working:
             return ("terminal", DT.ink, "Use bastion in your terminal", intro)
         case .plan:
             switch action {
@@ -116,11 +127,6 @@ struct CommandLineSheet: View {
 
     @ViewBuilder private var content: some View {
         switch flow.phase {
-        case .checking:
-            HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
-                Text("Checking how your terminal starts…").font(uiFont(13)).foregroundStyle(DT.dim)
-            }.frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
         case .plan, .working:
             planContent
         case .done:
@@ -182,10 +188,8 @@ struct CommandLineSheet: View {
     }
 
     @ViewBuilder private var buttons: some View {
-        let close = { withAnimation(.easeOut(duration: 0.15)) { store.cliFlow = nil } }
+        let close = { store.cliFlow = nil }
         switch flow.phase {
-        case .checking:
-            Button("Cancel", action: close).buttonStyle(SecondaryButton()).keyboardShortcut(.cancelAction)
         case .plan where action == "shell" || action == "link", .working:
             Button("Cancel", action: close).buttonStyle(SecondaryButton()).keyboardShortcut(.cancelAction).disabled(flow.phase == .working)
             Button { store.confirmCommandLine() } label: {
@@ -227,7 +231,8 @@ struct CommandLineRow: View {
             }
             Spacer(minLength: 12)
             if !installed {
-                Button("Install command-line tool") { store.installCommandLine() }.buttonStyle(SecondaryButton())
+                Button(store.busy.contains("cli-check") ? "Checking…" : "Install command-line tool") { store.installCommandLine() }
+                    .buttonStyle(SecondaryButton()).disabled(store.busy.contains("cli-check"))
             } else if store.commandLineIsOurs {
                 Button(store.busy.contains("cli") ? "Removing" : "Remove") { store.removeCommandLine() }
                     .buttonStyle(GhostButton()).disabled(store.busy.contains("cli"))
