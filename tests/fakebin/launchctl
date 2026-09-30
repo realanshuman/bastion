@@ -1,0 +1,11 @@
+#!/bin/bash
+# A stand-in for launchctl in tests (BASTION_LAUNCHCTL): it remembers "loaded" labels in $HOME/.fake-launchd and never
+# talks to the real launchd, so no test can start or stop this Mac's own Bastion agents.
+db="$HOME/.fake-launchd"; touch "$db"
+label(){ sed -n 's:.*<key>Label</key><string>\([^<]*\)</string>.*:\1:p' "$1" 2>/dev/null | head -1; }
+case "$1" in
+  list) awk '{print "-\t0\t" $0}' "$db" ;;
+  load) l=$(label "$2"); [ -n "$l" ] || exit 1; grep -qxF "$l" "$db" && exit 5; echo "$l" >> "$db" ;;
+  unload) l=$(label "$2"); [ -n "$l" ] || exit 1; grep -vxF "$l" "$db" > "$db.t"; mv "$db.t" "$db" ;;
+  *) exit 0 ;;
+esac

@@ -20,3 +20,4 @@ incidents/
 settings.json
 respond.lock/
 cache/
+tools/snapshot/.build/
