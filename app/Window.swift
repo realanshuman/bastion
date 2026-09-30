@@ -3,6 +3,7 @@
 // so the window, the terminal and AI agents always see the same thing.
 import SwiftUI
 import AppKit
+import ServiceManagement
 
 typealias JSON = [String: Any]
 
@@ -116,17 +117,19 @@ func said(_ e: JSON) -> String { (e["said"] as? String).flatMap { $0.isEmpty ? n
 
 // MARK: - Navigation
 
+/// The sidebar, in order. Each page answers one question: how am I doing (Home), what do I have to do (Needs you),
+/// how much is Bastion doing (Protection), my code, my AI tools, what happened (History), preferences, help.
 enum Pane: String, CaseIterable, Identifiable {
-    case home, incidents, repos, activity, quarantine, agents, settings, guide
+    case home, needs, protection, repos, agents, history, settings, guide
     var id: String { rawValue }
     var title: String {
         switch self {
         case .home: return "Home"
-        case .incidents: return "Incidents"
+        case .needs: return "Needs you"
+        case .protection: return "Protection"
         case .repos: return "Repositories"
-        case .activity: return "Activity"
-        case .quarantine: return "Quarantine"
         case .agents: return "AI agents"
+        case .history: return "History"
         case .settings: return "Settings"
         case .guide: return "How it works"
         }
@@ -134,11 +137,11 @@ enum Pane: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .home: return "house"
-        case .incidents: return "exclamationmark.shield"
+        case .needs: return "exclamationmark.shield"
+        case .protection: return "checkmark.shield"
         case .repos: return "folder"
-        case .activity: return "clock.arrow.circlepath"
-        case .quarantine: return "archivebox"
         case .agents: return "sparkles"
+        case .history: return "clock.arrow.circlepath"
         case .settings: return "gearshape"
         case .guide: return "book.closed"
         }
@@ -152,14 +155,14 @@ final class Router: ObservableObject {
     static let shared = Router()
     struct Place: Equatable { let pane: Pane; let incident: String?; let tab: String }
     @Published var pane: Pane = .home
-    @Published var incident: String?          // an open incident page (Incidents / INC-…)
+    @Published var incident: String?          // an open incident page (Needs you or History / INC-…)
     @Published var palette = false
-    @Published var incidentsTab = "needs"      // "needs" (Needs you) or "all" (every incident)
+    @Published var historyTab = "activity"     // History: "activity", "incidents" or "quarantine"
     @Published var focusAsk = 0                // bumped to put the cursor in Home's Ask box
     @Published private(set) var backStack: [Place] = []
     @Published private(set) var forwardStack: [Place] = []
 
-    private var here: Place { Place(pane: pane, incident: incident, tab: incidentsTab) }
+    private var here: Place { Place(pane: pane, incident: incident, tab: historyTab) }
     private func visit(_ p: Place) {
         palette = false
         guard p != here else { return }
@@ -167,11 +170,15 @@ final class Router: ObservableObject {
         if backStack.count > 60 { backStack.removeFirst() }
         show(p)
     }
-    private func show(_ p: Place) { pane = p.pane; incident = p.incident; incidentsTab = p.tab }
+    private func show(_ p: Place) { pane = p.pane; incident = p.incident; historyTab = p.tab }
 
-    func go(_ p: Pane) { visit(Place(pane: p, incident: nil, tab: incidentsTab)) }
-    func openNeedsYou() { visit(Place(pane: .incidents, incident: nil, tab: "needs")) }
-    func open(incident id: String) { visit(Place(pane: .incidents, incident: id, tab: incidentsTab)) }
+    func go(_ p: Pane) { visit(Place(pane: p, incident: nil, tab: historyTab)) }
+    func openNeedsYou() { visit(Place(pane: .needs, incident: nil, tab: historyTab)) }
+    func openHistory(_ tab: String) { visit(Place(pane: .history, incident: nil, tab: tab)) }
+    /// An incident opens where you are when that's Needs you, and in History otherwise
+    func open(incident id: String) {
+        pane == .needs ? visit(Place(pane: .needs, incident: id, tab: historyTab)) : visit(Place(pane: .history, incident: id, tab: "incidents"))
+    }
     func askHome() { go(.home); focusAsk += 1 }
     var canGoBack: Bool { !backStack.isEmpty }
     var canGoForward: Bool { !forwardStack.isEmpty }
@@ -226,6 +233,8 @@ final class AppStore: ObservableObject {
     @Published var chat: [Exchange] = []       // questions and answers on Home
     @Published var sampleRepo: String?         // a repo to use in example questions
     @Published var cliFlow: CommandLineFlow?   // "Install command-line tool" in progress (Terminal.swift)
+    @Published var levels: JSON = [:]          // Basic, Recommended, Maximum and what choosing each changes (bastion protect)
+    @Published var week: JSON = [:]            // the last 7 days in numbers (bastion activity)
     @Published var hideGetStarted = UserDefaults.standard.bool(forKey: "hideGetStarted") {
         didSet { UserDefaults.standard.set(hideGetStarted, forKey: "hideGetStarted") }
     }
@@ -276,7 +285,7 @@ final class AppStore: ObservableObject {
         Task {
             let r = await Task.detached(priority: .userInitiated) { () -> [Box] in
                 bastionAll([["status"], ["incidents"], ["repos"], ["activity", "-n", "300"], ["quarantine"], ["lists"], ["connect"], ["hooks", "status"],
-                            ["todos"], ["next"], ["agents"]])
+                            ["todos"], ["next"], ["agents"], ["protect"]])
             }.value
             hooks = r[7].json
             todos = r[8].json["items"] as? [JSON] ?? []
@@ -287,6 +296,8 @@ final class AppStore: ObservableObject {
             repos = r[2].json["repos"] as? [JSON] ?? []
             sampleRepo = Self.pickSample(repos)
             activity = r[3].json["events"] as? [JSON] ?? []
+            week = r[3].json["week"] as? JSON ?? [:]
+            levels = r[11].json
             quarantine = r[4].json["items"] as? [JSON] ?? []
             lists = r[5].json
             connect = r[6].json
@@ -461,6 +472,24 @@ final class AppStore: ObservableObject {
     }
 
     var protection: JSON { status["protection"] as? JSON ?? [:] }
+    /// basic · recommended · maximum · custom · off
+    var level: String { status["level"] as? String ?? "custom" }
+    var scanEveryHours: Int { protection["scan_every_hours"] as? Int ?? 6 }
+
+    /// Moves to a level. Going up happens at once; going down, or sending data to osv.dev, shows what changes and asks.
+    func applyLevel(_ id: String) {
+        let entry = (levels["levels"] as? [JSON] ?? []).first { $0["id"] as? String == id }
+        let title = entry?["title"] as? String ?? levelWord(id)
+        let steps = entry?["changes"] as? [JSON] ?? []
+        guard entry == nil || !steps.isEmpty else { flash("\(title) is already on."); return }
+        let go = { self.run("level", ["protect", id, "--yes"]) }
+        if steps.contains(where: { $0["lowers"] as? Bool == true || $0["consent"] != nil }) {
+            let list = steps.map { "· " + ($0["title"] as? String ?? "") + (($0["consent"] as? String).map { "\n  \($0)" } ?? "") }.joined(separator: "\n")
+            ask("Switch to \(title)?", "Bastion will:\n" + list, button: "Switch to \(title)", go)
+        } else { go() }
+    }
+
+    func setScanEvery(_ hours: Int) { run("schedule", ["schedule", "\(hours)h"]) }
     var autonomy: String { status["autonomy"] as? String ?? "contain" }
     var protected: Bool { (status["active_threats"] as? [Any] ?? []).isEmpty }
     var openIncidents: Int { incidents.filter { ($0["status"] as? String) != "resolved" }.count }
@@ -532,18 +561,19 @@ struct MainWindow: View {
     @ViewBuilder private var content: some View {
         switch router.pane {
         case .home: HomePage(store: store)
-        case .incidents:
-            if let id = router.incident { IncidentPage(store: store, id: id) } else { IncidentsPage(store: store) }
+        case .needs:
+            if let id = router.incident { IncidentPage(store: store, id: id) } else { NeedsPage(store: store) }
+        case .protection: ProtectionPage(store: store)
         case .repos: ReposPage(store: store)
-        case .activity: ActivityPage(store: store)
-        case .quarantine: QuarantinePage(store: store)
         case .agents: AgentsPage(store: store)
+        case .history:
+            if let id = router.incident { IncidentPage(store: store, id: id) } else { HistoryPage(store: store) }
         case .settings: SettingsPage(store: store)
         case .guide: GuidePage(store: store)
         }
     }
 
-    /// ⌘K or ⌘L search or ask · ⌘1 to ⌘7 pages · ⌘[ and ⌘] back and forward · ⌘R refresh · Esc closes or goes back
+    /// ⌘K or ⌘L search or ask · ⌘1 to ⌘8 pages · ⌘[ and ⌘] back and forward · ⌘R refresh · Esc closes or goes back
     private var shortcuts: some View {
         ZStack {
             Button("Search or ask") { withAnimation(.easeOut(duration: 0.12)) { router.palette.toggle() } }.keyboardShortcut("k", modifiers: .command)
@@ -554,7 +584,7 @@ struct MainWindow: View {
             Button("Refresh") { store.refresh() }.keyboardShortcut("r", modifiers: .command)
             Button("Close") {
                 if router.palette { withAnimation(.easeOut(duration: 0.12)) { router.palette = false } }
-                else if router.incident != nil { router.go(.incidents) }
+                else if router.incident != nil { router.go(router.pane) }
             }.keyboardShortcut(.escape, modifiers: [])
         }.opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
     }
@@ -603,15 +633,14 @@ struct Sidebar: View {
             omnibox
             VStack(spacing: 2) {
                 SideItem(pane: .home, selected: router.pane == .home) { router.go(.home) }
-                SideItem(pane: .incidents, selected: router.pane == .incidents, count: store.needsYouCount, tint: look.tint) { router.go(.incidents) }
-                header("Your code")
+                SideItem(pane: .needs, selected: router.pane == .needs, count: store.needsYouCount, tint: look.tint) { router.go(.needs) }
+                SideItem(pane: .protection, selected: router.pane == .protection,
+                         note: ["basic", "custom", "off"].contains(store.level) ? levelWord(store.level) : nil) { router.go(.protection) }
                 SideItem(pane: .repos, selected: router.pane == .repos) { router.go(.repos) }
-                SideItem(pane: .activity, selected: router.pane == .activity) { router.go(.activity) }
-                SideItem(pane: .quarantine, selected: router.pane == .quarantine, count: store.quarantine.count) { router.go(.quarantine) }
-                header("Connect")
                 SideItem(pane: .agents, selected: router.pane == .agents) { router.go(.agents) }
+                SideItem(pane: .history, selected: router.pane == .history) { router.go(.history) }
+                Rectangle().fill(DT.border).frame(height: 1).padding(.horizontal, 10).padding(.vertical, 10)
                 SideItem(pane: .settings, selected: router.pane == .settings) { router.go(.settings) }
-                header("Learn")
                 SideItem(pane: .guide, selected: router.pane == .guide) { router.go(.guide) }
             }.padding(.top, 16)
             Spacer(minLength: 16)
@@ -643,15 +672,8 @@ struct Sidebar: View {
         }.buttonStyle(.plain).help("Ask Bastion a question, or jump to anything")
     }
 
-    private func header(_ title: String) -> some View {
-        Text(title).font(uiFont(11, .medium)).foregroundStyle(DT.dim)
-            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.top, 18).padding(.bottom, 6)
-    }
-
     /// Like Vercel's "Action required" box: what needs you, or the rest of setup
     @ViewBuilder private var callout: some View {
-        let setup = store.status["setup"] as? JSON ?? [:]
-        let done = setup["done"] as? Int ?? 0, total = setup["total"] as? Int ?? 0
         let n = store.needsYouCount
         if router.pane == .home {
             EmptyView()   // Home says the same thing, bigger
@@ -664,12 +686,10 @@ struct Sidebar: View {
                         title: now ? "Act now" : "\(n) thing\(n == 1 ? "" : "s") to clean up",
                         text: now ? "Malware is running, or will run as soon as npm runs there." : "Nothing is running. Each one has a one-click fix.",
                         button: "Review") { router.openNeedsYou() }
-        } else if total > 0 && done < total {
-            let bulk = store.bulkSteps.count
-            SideCallout(icon: "shield.lefthalf.filled", tint: DT.green, title: "Finish setting up",
-                        text: "\(done) of \(total) protections \(done == 1 ? "is" : "are") on.", progress: Double(done) / Double(total),
-                        button: store.busy.contains("steps") ? "Turning on" : bulk > 0 ? "Turn on \(bulk) more" : "Show me") {
-                if bulk > 0 { store.doRecommended() } else { router.go(.home) }
+        } else if store.level == "off" && router.pane != .protection {
+            SideCallout(icon: "shield.slash", tint: DT.red, title: "Protection is off",
+                        text: "Nothing is watching this Mac.", button: store.busy.contains("level") ? "Turning on" : "Turn on Recommended") {
+                store.applyLevel("recommended")
             }
         }
     }
@@ -680,6 +700,7 @@ struct SideItem: View {
     let selected: Bool
     var count = 0
     var tint: Color? = nil
+    var note: String? = nil
     let action: () -> Void
     @State private var hover = false
     var body: some View {
@@ -691,6 +712,8 @@ struct SideItem: View {
                 if count > 0 {
                     Text("\(count)").font(uiFont(11, .semibold)).foregroundStyle(tint ?? DT.dim).monospacedDigit()
                         .padding(.horizontal, 6).frame(minWidth: 20, minHeight: 18).background((tint ?? DT.dim).opacity(0.12), in: Capsule())
+                } else if let note {
+                    Text(note).font(uiFont(12)).foregroundStyle(DT.dim).lineLimit(1)
                 }
             }
             .padding(.horizontal, 10).frame(height: 30).contentShape(Rectangle())
@@ -803,6 +826,11 @@ struct Segmented: View {
     }
 }
 
+/// "Recommended", "Custom"…: a protection level in one word
+func levelWord(_ level: String) -> String {
+    ["basic": "Basic", "recommended": "Recommended", "maximum": "Maximum", "off": "Off"][level] ?? "Custom"
+}
+
 // MARK: - Danger, in one place
 
 func dangerStyle(_ d: String) -> (icon: String, tint: Color, label: String) {
@@ -834,32 +862,6 @@ struct DangerPill: View {
 
 // MARK: - Protection switches (Settings; Home's Protection rows link here)
 
-struct ProtectionGroup: View {
-    @ObservedObject var store: AppStore
-    var body: some View {
-        RowGroup {
-            row("bolt", "Real-time watcher", "Stops malware loaders and attacker connections within seconds.", "watcher", store.protection["watcher"] as? Bool ?? false)
-            Hairline()
-            row("clock", "Scheduled scan", "Checks every repository at login and every 6 hours.", "scheduled_scan", store.protection["scheduled_scan"] as? Bool ?? false)
-            Hairline()
-            row("lock.shield", "Execution guard", "npm, node, pnpm, yarn and bun refuse to run in an infected project.", "exec_guard", store.protection["exec_guard"] as? Bool ?? false)
-        }
-    }
-    private func row(_ icon: String, _ title: String, _ detail: String, _ feature: String, _ on: Bool) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 13)).foregroundStyle(DT.dim).frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(uiFont(13, .medium)).foregroundStyle(DT.text)
-                Text(detail).font(uiFont(12)).foregroundStyle(DT.dim)
-            }
-            Spacer()
-            if store.busy.contains("feature:" + feature) { ProgressView().controlSize(.small).scaleEffect(0.7) }
-            Toggle(title, isOn: Binding(get: { on }, set: { store.setFeature(feature, title: title.lowercased(), on: $0) }))
-                .labelsHidden().toggleStyle(ThemeSwitch())
-        }.padding(.horizontal, 16).padding(.vertical, 12)
-    }
-}
-
 /// Where an activity row leads: its incident; for a scan, the incident it opened or updated; the quarantine; settings.
 @MainActor func activityTarget(_ e: JSON, in events: [JSON]) -> (() -> Void)? {
     if let id = e["incident"] as? String { return { Router.shared.open(incident: id) } }
@@ -869,8 +871,8 @@ struct ProtectionGroup: View {
         let next = events.first { ($0["incident"] as? String) != nil && (parseDate($0["time"]).map { $0 >= t && $0.timeIntervalSince(t) < 600 } ?? false) }
         if let id = next?["incident"] as? String { return { Router.shared.open(incident: id) } }
         return { Router.shared.go(.repos) }
-    case "quarantined": return { Router.shared.go(.quarantine) }
-    case "setting_changed": return { Router.shared.go(.settings) }
+    case "quarantined": return { Router.shared.openHistory("quarantine") }
+    case "setting_changed": return { Router.shared.go(.protection) }
     case "fixed": return { Router.shared.openNeedsYou() }
     default: return nil
     }
@@ -918,24 +920,68 @@ struct ActivityRow: View {
 
 // MARK: - Incidents
 
-struct IncidentsPage: View {
+/// Everything that needs you, live: it updates on its own, and fixed items leave the list
+struct NeedsPage: View {
     @ObservedObject var store: AppStore
-    @ObservedObject private var router = Router.shared
     var body: some View {
         VStack(spacing: 0) {
-            TopBar(crumbs: ["Incidents"]) {
+            TopBar(crumbs: ["Needs you"]) {
                 Button { store.scan() } label: { Label(store.busy.contains("scan") ? "Scanning" : "Scan now", systemImage: "magnifyingglass") }
                     .buttonStyle(SecondaryButton()).disabled(store.busy.contains("scan"))
             }
+            NeedsYouList(store: store)
+        }
+    }
+}
+
+/// What happened: everything Bastion did, the attacks it handled, and what it locked away
+struct HistoryPage: View {
+    @ObservedObject var store: AppStore
+    @ObservedObject private var router = Router.shared
+    @State private var query = ""
+    var body: some View {
+        VStack(spacing: 0) {
+            TopBar(crumbs: ["History"]) {
+                if router.historyTab == "activity" {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(DT.faint)
+                        TextField("Filter", text: $query).textFieldStyle(.plain).font(uiFont(13)).frame(width: 180)
+                    }.padding(.horizontal, 10).frame(height: 28)
+                    .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
+                }
+            }
             HStack(spacing: 12) {
-                Segmented(items: [("needs", "Needs you", store.needsYouCount), ("all", "All incidents", store.incidents.count)], selection: $router.incidentsTab)
+                Segmented(items: [("activity", "Activity", 0), ("incidents", "Incidents", store.incidents.count), ("quarantine", "Quarantine", store.quarantine.count)],
+                          selection: $router.historyTab)
                 Spacer()
-                Text(router.incidentsTab == "needs" ? "Updates on its own. Fixed items leave the list." : "Every attack Bastion handled, newest first.")
-                    .font(uiFont(12)).foregroundStyle(DT.dim)
+                WeekLine(week: store.week)
             }.padding(.horizontal, 20).frame(height: 52)
             Hairline()
-            if router.incidentsTab == "needs" { NeedsYouList(store: store) } else { IncidentList(store: store) }
+            switch router.historyTab {
+            case "incidents": IncidentList(store: store)
+            case "quarantine": QuarantineList(store: store)
+            default: ActivityList(store: store, query: query)
+            }
         }
+    }
+}
+
+/// "Last 7 days: 28 scans · 1 caught · 1 fixed"
+struct WeekLine: View {
+    let week: JSON
+    var body: some View {
+        let scans = week["scans"] as? Int ?? 0, caught = week["caught"] as? Int ?? 0, fixed = week["fixed"] as? Int ?? 0
+        HStack(spacing: 6) {
+            Text("Last 7 days").foregroundStyle(DT.dim)
+            Text("\(scans) scan\(scans == 1 ? "" : "s")").foregroundStyle(DT.text2)
+            Text("·").foregroundStyle(DT.faint)
+            Text("\(caught) caught").foregroundStyle(caught > 0 ? DT.orange : DT.text2)
+            Text("·").foregroundStyle(DT.faint)
+            Text("\(fixed) fixed").foregroundStyle(DT.text2)
+        }
+        .font(uiFont(12)).monospacedDigit()
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1153,7 +1199,7 @@ struct IncidentPage: View {
     var body: some View {
         let inc = store.details[id]
         VStack(spacing: 0) {
-            TopBar(crumbs: ["Incidents", id], back: { Router.shared.go(.incidents) }) {
+            TopBar(crumbs: [Router.shared.pane.title, id], back: { Router.shared.go(Router.shared.pane) }) {
                 if let inc { actions(inc) }
             }
             if let inc, inc["error"] == nil {
@@ -1758,9 +1804,9 @@ struct RepoRow: View {
 
 // MARK: - Activity
 
-struct ActivityPage: View {
+struct ActivityList: View {
     @ObservedObject var store: AppStore
-    @State private var query = ""
+    let query: String
     private var days: [(String, [JSON])] {
         let events = query.isEmpty ? store.activity : store.activity.filter { said($0).localizedCaseInsensitiveContains(query) || ($0["message"] as? String ?? "").localizedCaseInsensitiveContains(query) }
         var out: [(String, [JSON])] = []
@@ -1774,14 +1820,6 @@ struct ActivityPage: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            TopBar(crumbs: ["Activity"]) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(DT.faint)
-                    TextField("Filter", text: $query).textFieldStyle(.plain).font(uiFont(13)).frame(width: 180)
-                }.padding(.horizontal, 10).frame(height: 28)
-                .background(DT.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DT.border))
-            }
             if days.isEmpty {
                 EmptyState(icon: "clock.arrow.circlepath", title: query.isEmpty ? "No activity yet" : "Nothing matches “\(query)”", text: "Everything Bastion catches, blocks, fixes or changes shows up here.")
             } else {
@@ -1808,11 +1846,10 @@ struct ActivityPage: View {
 
 // MARK: - Quarantine
 
-struct QuarantinePage: View {
+struct QuarantineList: View {
     @ObservedObject var store: AppStore
     var body: some View {
         VStack(spacing: 0) {
-            TopBar(crumbs: ["Quarantine"])
             if store.quarantine.isEmpty {
                 EmptyState(icon: "archivebox", title: "Nothing in quarantine", text: "Known-malicious leftovers and infected copies are moved here, never deleted, so you can look at them or put them back.", tint: DT.green)
             } else {
@@ -1995,86 +2032,132 @@ struct AgentsPage: View {
 
 struct SettingsPage: View {
     @ObservedObject var store: AppStore
-    private let levels: [(String, String, String)] = [
-        ("contain", "Contain", "Investigates and takes the steps it can prove: removes injected code when the file then matches its last clean commit byte for byte (with undo), stops loaders, quarantines leftovers and blocks attacker addresses. Commits, pushes and access changes stay with you."),
-        ("observe", "Observe", "Investigates and writes incident reports, but changes nothing on its own."),
-        ("off", "Off", "Doesn't respond on its own. The watcher and scans still run, and you can respond by hand."),
-    ]
+    @ObservedObject private var login = LoginItem.shared
+    @AppStorage("settingsTab") private var tab = "general"
     var body: some View {
         VStack(spacing: 0) {
             TopBar(crumbs: ["Settings"])
+            HStack(spacing: 12) {
+                Segmented(items: [("general", "General", 0), ("advanced", "Advanced", 0), ("about", "About", 0)], selection: $tab)
+                Spacer()
+                if tab == "advanced" {
+                    Text("Most people never need these.").font(uiFont(12)).foregroundStyle(DT.dim)
+                } else if tab == "general" {
+                    LinkButton(title: "Protection has its own page") { Router.shared.go(.protection) }
+                }
+            }.padding(.horizontal, 20).frame(height: 52)
+            Hairline()
             PageBody(width: 780) {
-                PageSection(title: "Appearance", note: "Light, dark, or the same as your Mac.") { AppearanceCards() }
-                PageSection(title: "Auto-respond", note: "How much Bastion does on its own when it finds something.") {
-                    RowGroup {
-                        ForEach(Array(levels.enumerated()), id: \.offset) { i, l in
-                            if i > 0 { Hairline() }
-                            Button { store.setAutonomy(l.0) } label: {
-                                HStack(alignment: .top, spacing: 12) {
-                                    ZStack {
-                                        Circle().strokeBorder(store.autonomy == l.0 ? DT.ink : DT.border, lineWidth: 1.5).frame(width: 16, height: 16)
-                                        if store.autonomy == l.0 { Circle().fill(DT.ink).frame(width: 7, height: 7) }
-                                    }.padding(.top, 1)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(l.1).font(uiFont(13, .semibold)).foregroundStyle(DT.text)
-                                        Text(l.2).font(uiFont(12)).foregroundStyle(DT.dim).lineSpacing(1.5).fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
-                                    }
-                                    Spacer(minLength: 0)
-                                }.padding(16).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                }
-                PageSection(title: "Protection", note: "What runs in the background.") { ProtectionGroup(store: store) }
-                PageSection(title: "Online malware check", note: "Compares your exact package versions with osv.dev's list of malicious packages.") {
-                    RowGroup {
-                        HStack(spacing: 12) {
-                            Image(systemName: "network").font(.system(size: 13)).foregroundStyle(DT.dim).frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Check dependencies against osv.dev").font(uiFont(13, .medium)).foregroundStyle(DT.text)
-                                Text("Sends package names and versions, never your code. Off until you turn it on.").font(uiFont(12)).foregroundStyle(DT.dim)
-                            }
-                            Spacer()
-                            Toggle("osv", isOn: Binding(get: { store.status["osv"] as? Bool ?? false }, set: { on in
-                                if on {
-                                    store.ask("Turn on the online malware check?", "Bastion will send package names and versions (never your code) to osv.dev.", button: "Turn on") {
-                                        store.run("osv", ["osv", "on", "--yes"], done: "Online malware check is on.")
-                                    }
-                                } else { store.run("osv", ["osv", "off"], done: "Online malware check is off.") }
-                            })).labelsHidden().toggleStyle(ThemeSwitch())
-                        }.padding(.horizontal, 16).padding(.vertical, 12)
-                    }
-                }
-                PageSection(title: "Command line", note: "Everything in this window also works in a terminal.") {
-                    RowGroup { CommandLineRow(store: store) }
-                }
-                PageSection(title: "Allowlist", note: "Your own servers. Never treated as a threat.") {
-                    ListEditor(store: store, key: "allowlist", command: "allow", placeholder: "api.mycompany.com")
-                }
-                PageSection(title: "Blocklist", note: "Attacker addresses. Node processes that connect to them are stopped.") {
-                    ListEditor(store: store, key: "blocklist", command: "block", placeholder: "203.0.113.7")
-                }
-                PageSection(title: "Ignore list", note: "Docs and tests that only quote a signature. Build configs are only skipped by exact path.") {
-                    ListEditor(store: store, key: "ignore", command: "ignore", placeholder: "/docs/security-notes/")
-                }
-                PageSection(title: "About") {
-                    RowGroup {
-                        HStack(spacing: 12) {
-                            BrandMark(size: 22)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Bastion \(store.status["version"] as? String ?? "")").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
-                                Text(tildePath(store.status["engine"] as? String ?? "")).font(codeFont(12)).foregroundStyle(DT.dim)
-                            }
-                            Spacer()
-                            Button("Engine folder") { NSWorkspace.shared.open(URL(fileURLWithPath: store.status["engine"] as? String ?? "")) }.buttonStyle(SecondaryButton())
-                            Button("Website") { NSWorkspace.shared.open(URL(string: "https://bastion-neon.vercel.app")!) }.buttonStyle(SecondaryButton())
-                            Button("GitHub") { NSWorkspace.shared.open(URL(string: "https://github.com/realanshuman/bastion")!) }.buttonStyle(SecondaryButton())
-                        }.padding(16)
-                    }
+                switch tab {
+                case "advanced": advanced
+                case "about": about
+                default: general
                 }
             }
         }
+        .onAppear { login.refresh() }
     }
+
+    @ViewBuilder private var general: some View {
+        PageSection(title: "Appearance", note: "Light, dark, or the same as your Mac.") { AppearanceCards() }
+        PageSection(title: "Startup", note: "Bastion's protection runs in the background either way. This is the menu-bar icon and window.") {
+            RowGroup {
+                HStack(spacing: 12) {
+                    Image(systemName: "power").font(.system(size: 13)).foregroundStyle(DT.dim).frame(width: 18).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Open Bastion when you log in").font(uiFont(13, .medium)).foregroundStyle(DT.text)
+                        Text(login.detail).font(uiFont(12)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    if login.needsApproval {
+                        Button("Open Login Items") { login.openSystemSettings() }.buttonStyle(SecondaryButton())
+                    }
+                    Toggle("Open Bastion when you log in", isOn: Binding(get: { login.on }, set: { on in
+                        if let error = login.set(on) { store.flash(error) }
+                    })).labelsHidden().toggleStyle(ThemeSwitch())
+                }.padding(.horizontal, 16).padding(.vertical, 12)
+            }
+        }
+        PageSection(title: "Command line", note: "Everything in this window also works in a terminal.") {
+            RowGroup { CommandLineRow(store: store) }
+        }
+    }
+
+    @ViewBuilder private var advanced: some View {
+        PageSection(title: "Allowlist", note: "Your own servers. Never treated as a threat.") {
+            ListEditor(store: store, key: "allowlist", command: "allow", placeholder: "api.mycompany.com")
+        }
+        PageSection(title: "Blocklist", note: "Attacker addresses. Node processes that connect to them are stopped.") {
+            ListEditor(store: store, key: "blocklist", command: "block", placeholder: "203.0.113.7")
+        }
+        PageSection(title: "Ignore list", note: "Docs and tests that only quote a signature. Build configs are only skipped by exact path.") {
+            ListEditor(store: store, key: "ignore", command: "ignore", placeholder: "/docs/security-notes/")
+        }
+    }
+
+    @ViewBuilder private var about: some View {
+        PageSection(title: "About") {
+            RowGroup {
+                HStack(spacing: 12) {
+                    BrandMark(size: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Bastion \(store.status["version"] as? String ?? "")").font(uiFont(13, .semibold)).foregroundStyle(DT.text)
+                        Text("A guard against supply-chain malware in JavaScript projects. Open source, and it runs only on your Mac.")
+                            .font(uiFont(12)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button("Website") { NSWorkspace.shared.open(URL(string: "https://bastion-neon.vercel.app")!) }.buttonStyle(SecondaryButton())
+                    Button("GitHub") { NSWorkspace.shared.open(URL(string: "https://github.com/realanshuman/bastion")!) }.buttonStyle(SecondaryButton())
+                }.padding(16)
+            }
+        }
+        PageSection(title: "Files", note: "Where Bastion keeps its engine, logs and incident reports.") {
+            RowGroup {
+                folderRow("Engine", store.status["engine"] as? String ?? "")
+                Hairline()
+                folderRow("Logs", (store.status["engine"] as? String ?? "") + "/logs")
+                Hairline()
+                folderRow("Incident reports", (store.status["engine"] as? String ?? "") + "/incidents")
+            }
+        }
+    }
+
+    private func folderRow(_ title: String, _ path: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "folder").font(.system(size: 13)).foregroundStyle(DT.dim).frame(width: 18).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(uiFont(13, .medium)).foregroundStyle(DT.text)
+                Text(tildePath(path)).font(codeFont(12)).foregroundStyle(DT.dim).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            Button("Show in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }.buttonStyle(SecondaryButton())
+        }.padding(.horizontal, 16).padding(.vertical, 12)
+    }
+}
+
+/// "Open Bastion when you log in", through macOS's own login items, so System Settings shows it and can turn it off
+@MainActor
+final class LoginItem: ObservableObject {
+    static let shared = LoginItem()
+    @Published private(set) var status: SMAppService.Status = .notRegistered
+    var on: Bool { status == .enabled }
+    var needsApproval: Bool { status == .requiresApproval }
+    var detail: String {
+        needsApproval ? "macOS is waiting for you to allow it in System Settings, under Login Items."
+                      : "Puts Bastion's icon in the menu bar as soon as you log in."
+    }
+    func refresh() { status = SMAppService.mainApp.status }
+    /// nil when it worked, else what went wrong in plain words
+    func set(_ on: Bool) -> String? {
+        do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
+        catch {
+            refresh()
+            return (on ? "Couldn't add Bastion to your login items. " : "Couldn't remove Bastion from your login items. ") + error.localizedDescription
+        }
+        refresh()
+        return nil
+    }
+    func openSystemSettings() { SMAppService.openSystemSettingsLoginItems() }
 }
 
 struct ListEditor: View {
@@ -2157,7 +2240,14 @@ struct CommandPalette: View {
         } else if store.commandLineIsOurs {
             list.append(Command(group: "Actions", title: "Remove the bastion command from the terminal", icon: "terminal") { store.removeCommandLine() })
         }
-        for (level, title) in [("contain", "Contain"), ("observe", "Observe"), ("off", "Off")] where level != store.autonomy {
+        for l in store.levels["levels"] as? [JSON] ?? [] where l["current"] as? Bool != true {
+            let id = l["id"] as? String ?? "", title = l["title"] as? String ?? ""
+            list.append(Command(group: "Protection", title: "Switch to \(title) protection", icon: "checkmark.shield") { store.applyLevel(id) })
+        }
+        for (h, title) in [(1, "every hour"), (6, "every 6 hours"), (24, "once a day")] where h != store.scanEveryHours {
+            list.append(Command(group: "Protection", title: "Scan \(title)", icon: "clock") { store.setScanEvery(h) })
+        }
+        for (level, title) in [("contain", "Contain"), ("observe", "Report only"), ("off", "Off")] where level != store.autonomy {
             list.append(Command(group: "Actions", title: "Set auto-respond to \(title)", icon: "wand.and.stars") { store.setAutonomy(level) })
         }
         for (mode, title, icon) in [("system", "Match the Mac's appearance", "circle.lefthalf.filled"), ("light", "Light mode", "sun.max"), ("dark", "Dark mode", "moon")]

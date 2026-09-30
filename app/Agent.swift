@@ -48,8 +48,10 @@ extension AppStore {
             switch a["page"] as? String ?? "" {
             case "needs": Router.shared.openNeedsYou()
             case "incident": if let id = a["id"] as? String { Router.shared.open(incident: id) }
-            case "activity": Router.shared.go(.activity)
-            case "quarantine": Router.shared.go(.quarantine)
+            case "activity": Router.shared.openHistory("activity")
+            case "quarantine": Router.shared.openHistory("quarantine")
+            case "incidents": Router.shared.openHistory("incidents")
+            case "protection": Router.shared.go(.protection)
             case "agents": Router.shared.go(.agents)
             case "repos": Router.shared.go(.repos)
             case "settings": Router.shared.go(.settings)
@@ -71,6 +73,7 @@ extension AppStore {
         case "appearance":
             if let v = a["value"] as? String { Appearance.shared.mode = v }
         case "cli_install": installCommandLine()   // the sheet shows the change and asks
+        case "level": if let l = a["level"] as? String { applyLevel(l) }   // asks first when it lowers anything
         case "cli_remove": removeCommandLine()
         default: break
         }
@@ -82,6 +85,7 @@ extension AppStore {
         case "scan": return "scan"
         case "fix": return (a["id"] as? String).map { "fix:" + $0 }
         case "steps": return "steps"
+        case "level": return "level"
         case "step": return (a["id"] as? String).map { "step:" + $0 }
         case "run": return (a["args"] as? [String]).map { "ask:" + $0.joined(separator: " ") }
         case "connect": return (a["agent"] as? String).map { "connect:" + $0 }
@@ -459,15 +463,15 @@ struct GetStarted: View {
         guard store.loaded, !store.engineMissing, !store.hideGetStarted else { return false }
         let installed = store.agents.filter { $0["installed"] as? Bool == true }
         let agentDone = installed.isEmpty || installed.contains { $0["connected"] as? Bool == true }
-        return !(store.lastScanDate != nil && store.bulkSteps.isEmpty && agentDone)
+        return !(store.lastScanDate != nil && ["recommended", "maximum"].contains(store.level) && agentDone)
     }
     var body: some View {
         let scanned = store.lastScanDate != nil
-        let bulk = store.bulkSteps
+        let strong = ["recommended", "maximum"].contains(store.level)
         let installed = store.agents.filter { $0["installed"] as? Bool == true }
         let connected = installed.contains { $0["connected"] as? Bool == true }
         let agentDone = connected || installed.isEmpty
-        let done = [scanned, bulk.isEmpty, agentDone].filter { $0 }.count
+        let done = [scanned, strong, agentDone].filter { $0 }.count
         PageSection(title: "Get started", count: "\(done) of 3") {
             Button("Hide") { withAnimation(.easeOut(duration: 0.2)) { store.hideGetStarted = true } }.buttonStyle(GhostButton())
         } content: {
@@ -477,10 +481,10 @@ struct GetStarted: View {
                                    : "One scan looks through every repository in your home folder. It takes a few seconds.",
                      button: scanned || store.neverScanned ? nil : (store.busy.contains("scan") ? "Scanning" : "Scan now", { store.scan() }))
                 Hairline()
-                step(2, "Turn on protection", done: bulk.isEmpty,
-                     text: bulk.isEmpty ? "Done. Everything that can run in the background is on."
-                                        : "The watcher, the scheduled scan, the execution guard and the push guard. One click turns on the \(bulk.count) that are off.",
-                     button: bulk.isEmpty ? nil : (store.busy.contains("steps") ? "Turning on" : "Turn on \(bulk.count)", { store.doRecommended() }))
+                step(2, "Choose your protection", done: strong,
+                     text: strong ? "Done. \(levelWord(store.level)) protection is on."
+                                  : "Recommended also stops malware before it can run or spread: npm won't start in an infected project, and every push is checked.",
+                     button: strong ? nil : (store.busy.contains("level") ? "Turning on" : "Use Recommended", { store.applyLevel("recommended") }))
                 Hairline()
                 step(3, "Connect your AI agent", done: agentDone,
                      text: connected ? "Done. Your agent checks with Bastion before it runs npm."
@@ -516,30 +520,25 @@ struct HomeSections: View {
     var body: some View {
         let gettingStarted = GetStarted.visible(store)
         let urgentFirst = store.needsYouCount > 0
-        let setupOpen = !gettingStarted && store.steps.contains { $0["done"] as? Bool != true && $0["optional"] as? Bool != true }
         if gettingStarted && !urgentFirst { GetStarted(store: store) }
-        sections(setupOpen)
+        sections
         if gettingStarted && urgentFirst { GetStarted(store: store) }
     }
 
-    @ViewBuilder private func sections(_ setupOpen: Bool) -> some View {
+    @ViewBuilder private var sections: some View {
         if wide {
             HStack(alignment: .top, spacing: 32) {
                 VStack(alignment: .leading, spacing: 36) {
                     NeedsSection(store: store)
-                    if setupOpen { SetupSection(store: store) }
-                }.frame(maxWidth: .infinity)
-                VStack(alignment: .leading, spacing: 36) {
                     ActivitySection(store: store)
-                    ProtectionSection(store: store)
-                }.frame(width: 300)
+                }.frame(maxWidth: .infinity)
+                ProtectionSummary(store: store).frame(width: 300)
             }
         } else {
             VStack(alignment: .leading, spacing: 36) {
                 NeedsSection(store: store)
+                ProtectionSummary(store: store)
                 ActivitySection(store: store)
-                if setupOpen { SetupSection(store: store) }
-                ProtectionSection(store: store)
             }
         }
     }
@@ -633,7 +632,7 @@ struct ActivitySection: View {
     var body: some View {
         let items = entries
         PageSection(title: "Recent activity") {
-            LinkButton(title: "All") { Router.shared.go(.activity) }
+            LinkButton(title: "All") { Router.shared.openHistory("activity") }
         } content: {
             RowGroup {
                 if items.isEmpty {
@@ -664,126 +663,55 @@ struct ActivitySection: View {
     }
 }
 
-/// What Bastion keeps an eye on, one line each. Every row leads to where it's changed.
-struct ProtectionSection: View {
+/// How protected you are, in one card: the level, what it means, what's on, and the way to change it
+struct ProtectionSummary: View {
     @ObservedObject var store: AppStore
     var body: some View {
-        let g = store.status["git_guard"] as? JSON ?? [:]
+        let level = store.level
+        let entry = (store.levels["levels"] as? [JSON] ?? []).first { $0["id"] as? String == level }
+        let strong = level == "recommended" || level == "maximum"
+        let tint = level == "off" ? DT.red : strong ? DT.green : DT.dim
         let p = store.protection
-        let connected = store.agents.filter { $0["connected"] as? Bool == true }.count
-        let installed = store.agents.filter { $0["installed"] as? Bool == true }.count
-        let level = store.autonomy
+        let g = store.status["git_guard"] as? JSON ?? [:]
+        let repos = g["repos"] as? Int ?? 0
+        let parts: [(String, Bool)] = [
+            ("Real-time watcher", p["watcher"] as? Bool == true), ("Scheduled scan", p["scheduled_scan"] as? Bool == true),
+            ("Execution guard", p["exec_guard"] as? Bool == true), ("Push guard", repos > 0 && (g["unprotected"] as? Int ?? 0) == 0),
+            ("Contains attacks on its own", store.autonomy == "contain"), ("Online malware check", store.status["osv"] as? Bool == true),
+        ]
         PageSection(title: "Protection") {
-            RowGroup {
-                row("folder", "Repositories", "\(g["repos"] as? Int ?? store.repos.count) watched", sub: "\(g["protected"] as? Int ?? 0) guarded on push", on: nil) { Router.shared.go(.repos) }
-                Hairline()
-                row("bolt", "Real-time watcher", p["watcher"] as? Bool == true ? "On" : "Off", on: p["watcher"] as? Bool == true) { Router.shared.go(.settings) }
-                Hairline()
-                row("clock", "Scheduled scan", p["scheduled_scan"] as? Bool == true ? "Every 6h" : "Off", on: p["scheduled_scan"] as? Bool == true) { Router.shared.go(.settings) }
-                Hairline()
-                row("lock.shield", "Execution guard", p["exec_guard"] as? Bool == true ? "On" : "Off", on: p["exec_guard"] as? Bool == true) { Router.shared.go(.settings) }
-                Hairline()
-                row("wand.and.stars", "Auto-respond", level == "contain" ? "Contain" : level == "observe" ? "Report only" : "Off", on: level == "contain") { Router.shared.go(.settings) }
-                Hairline()
-                row("sparkles", "AI agents", installed == 0 ? "None found" : "\(connected) of \(installed)", on: installed == 0 ? nil : connected > 0) { Router.shared.go(.agents) }
-            }
-        }
-    }
-    private func row(_ icon: String, _ title: String, _ value: String, sub: String? = nil, on: Bool?, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 12, weight: .medium)).foregroundStyle(DT.dim).frame(width: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(uiFont(13)).foregroundStyle(DT.text)
-                    if let sub { Text(sub).font(uiFont(12)).foregroundStyle(DT.dim) }
-                }
-                Spacer(minLength: 8)
-                if let on { Tag(text: value, tint: on ? DT.green : DT.dim) } else { Text(value).font(uiFont(12, .medium)).foregroundStyle(DT.text2) }
-            }.padding(.horizontal, 16).frame(height: sub == nil ? 40 : 52).contentShape(Rectangle())
-        }.buttonStyle(.plain).hoverRow(radius: 0)
-    }
-}
-
-/// The setup checklist: what's on, what's left, one click for the safe ones
-struct SetupSection: View {
-    @ObservedObject var store: AppStore
-    @State private var showAll = false
-    @State private var showDone = false
-    var body: some View {
-        let required = store.steps.filter { $0["optional"] as? Bool != true }
-        let done = store.steps.filter { $0["done"] as? Bool == true }
-        let open = store.steps.filter { $0["done"] as? Bool != true }
-            .sorted { ($0["optional"] as? Bool == true ? 1 : 0) < ($1["optional"] as? Bool == true ? 1 : 0) }
-        let shown = showAll ? open : Array(open.prefix(4))
-        let bulk = store.bulkSteps
-        let doneRequired = required.filter { $0["done"] as? Bool == true }.count
-        PageSection(title: "Setup", count: "\(doneRequired) of \(required.count) on") {
-            if !bulk.isEmpty {
-                Button { store.doRecommended() } label: {
-                    Text(store.busy.contains("steps") ? "Turning on" : "Turn on \(bulk.count)")
-                }.buttonStyle(PrimaryButton()).disabled(store.busy.contains("steps"))
-                    .help("Turns on, one after another:\n" + bulk.compactMap { $0["title"] as? String }.joined(separator: "\n"))
-            }
+            LinkButton(title: "Change") { Router.shared.go(.protection) }
         } content: {
             RowGroup {
-                ProgressBar(value: Double(doneRequired) / Double(max(required.count, 1))).padding(16)
-                ForEach(Array(shown.enumerated()), id: \.offset) { _, s in
-                    Hairline()
-                    row(s)
-                }
-                if open.count > 4 {
-                    Hairline()
-                    HStack {
-                        Button(showAll ? "Show fewer" : "Show \(open.count - 4) more") { withAnimation(.easeOut(duration: 0.15)) { showAll.toggle() } }.buttonStyle(GhostButton())
-                        Spacer()
-                    }.padding(.horizontal, 8).frame(height: 40)
-                }
-                if !done.isEmpty {
-                    Hairline()
-                    Button { withAnimation(.easeOut(duration: 0.15)) { showDone.toggle() } } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: showDone ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(DT.faint).frame(width: 16)
-                            Text("\(done.count) done").font(uiFont(12, .medium)).foregroundStyle(DT.dim)
-                            Spacer()
-                        }.padding(.horizontal, 16).frame(height: 40).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                    if showDone {
-                        ForEach(Array(done.enumerated()), id: \.offset) { _, s in
-                            HStack(spacing: 12) {
-                                Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(DT.green).frame(width: 16)
-                                Text(s["title"] as? String ?? "").font(uiFont(13)).foregroundStyle(DT.dim).strikethrough(true, color: DT.faint)
-                                Spacer()
-                            }.padding(.horizontal, 16).frame(height: 34)
-                        }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: level == "off" ? "shield.slash.fill" : "checkmark.shield.fill").font(.system(size: 14)).foregroundStyle(tint)
+                            .accessibilityHidden(true)
+                        Text(levelWord(level)).font(uiFont(15, .semibold)).foregroundStyle(DT.text)
                     }
-                }
+                    Text(level == "off" ? "Nothing is watching this Mac."
+                         : level == "custom" ? "Your own mix of the settings on the Protection page."
+                         : entry?["summary"] as? String ?? "")
+                        .font(uiFont(12)).foregroundStyle(DT.dim).lineSpacing(1.5).fixedSize(horizontal: false, vertical: true)
+                    if !strong {
+                        Button(store.busy.contains("level") ? "Turning on" : "Use Recommended") { store.applyLevel("recommended") }
+                            .buttonStyle(SecondaryButton()).disabled(store.busy.contains("level")).padding(.top, 4)
+                    }
+                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                Hairline()
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(parts.indices, id: \.self) { i in
+                        HStack(spacing: 8) {
+                            Image(systemName: parts[i].1 ? "checkmark" : "minus").font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(parts[i].1 ? DT.green : DT.faint).frame(width: 12).accessibilityHidden(true)
+                            Text(parts[i].0).font(uiFont(12)).foregroundStyle(parts[i].1 ? DT.text2 : DT.dim)
+                            Spacer(minLength: 0)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(parts[i].0 + (parts[i].1 ? ", on" : ", off"))
+                    }
+                }.padding(16)
             }
         }
-    }
-
-    private func row(_ s: JSON) -> some View {
-        let id = s["id"] as? String ?? ""
-        let action = s["action"] as? [String] ?? []
-        let label: String = {
-            if action.first == "connect" { return "Connect" }
-            if action.first == "hooks" { return "Add" }
-            if action.contains("--husky") { return "Protect" }
-            if action.first == "enable" && action.dropFirst().first == "git-guard" { return "Protect" }
-            if action.isEmpty { return "Show me" }
-            return "Turn on"
-        }()
-        return HStack(alignment: .top, spacing: 12) {
-            Circle().strokeBorder(DT.border, lineWidth: 1.5).frame(width: 16, height: 16).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(s["title"] as? String ?? "").font(uiFont(13, .medium)).foregroundStyle(DT.text)
-                    if s["optional"] as? Bool == true { Tag(text: "Optional", tint: DT.dim) }
-                }
-                Text(s["why"] as? String ?? "").font(uiFont(12)).foregroundStyle(DT.dim).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            if store.busy.contains("step:" + id) { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14) }
-            Button(label) { store.doStep(s) }.buttonStyle(SecondaryButton()).disabled(store.busy.contains("step:" + id))
-        }.padding(16)
     }
 }

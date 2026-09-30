@@ -289,7 +289,7 @@ func guardHusky(_ repo: String) throws -> [String: Any] {
 /// The setup steps that make Bastion fully effective, with the action that completes each.
 func nextSteps() -> [[String: Any]] {
     var steps: [[String: Any]] = []
-    let agents = run("/bin/launchctl", ["list"], timeout: 10).out
+    let agents = run(LAUNCHCTL, ["list"], timeout: 10).out
     func add(_ id: String, _ title: String, _ why: String, done: Bool, action: [String]?, confirm: String? = nil, optional: Bool = false, page: String? = nil, bulk: Bool = false) {
         // bulk: safe to do together with one click (turning protections on); the rest are individual choices
         var s: [String: Any] = ["id": id, "title": title, "why": why, "done": done, "optional": optional, "bulk": bulk]

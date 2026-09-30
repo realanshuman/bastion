@@ -221,7 +221,7 @@ private func reply(_ intent: String, _ answer: String, tone: String = "info", po
 }
 
 /// A next step. `kind` is what the app does (scan · check · fix · steps · step · run · open · ask · connect · copy · present ·
-/// feature_off · appearance · cli_install · cli_remove); `command` is the same step for a terminal.
+/// feature_off · appearance · cli_install · cli_remove · level); `command` is the same step for a terminal.
 private func act(_ label: String, _ kind: String, _ extra: [String: Any] = [:], command: String? = nil) -> [String: Any] {
     var a: [String: Any] = ["label": label, "kind": kind]
     for (k, v) in extra { a[k] = v }
@@ -278,6 +278,7 @@ private func route(_ q: Question) -> [String: Any] {
         return reply("appearance", mode == "system" ? "Done. I'll match your Mac's appearance." : "Done. Switched to \(mode) mode.", tone: "good",
                      auto: ["kind": "appearance", "value": mode], suggest: ["What needs me?", "Am I safe?"])
     }
+    if let r = answerLevel(q) { return r }
     if let r = answerToggle(q) { return r }
     if q.any(["who are you", "what are you", "what is bastion", "about bastion", "about you", "what does bastion do", "what do you do"]) {
         return explain("bastion")
@@ -309,6 +310,25 @@ private func route(_ q: Question) -> [String: Any] {
     if !loose.choices.isEmpty { return answerWhich(loose.choices) }
     return reply("unknown", "I'm not sure what you mean by “\(q.raw)”.",
                  points: ["I can check a repository, scan everything, tell you what needs you, explain anything I've said, or turn on protection."])
+}
+
+// MARK: Protection levels
+
+private func answerLevel(_ q: Question) -> [String: Any]? {
+    let named = PROTECTION_LEVELS.first { q.has($0.id) || (($0.id == "maximum") && q.any(["max", "strict", "strictest", "highest"])) }
+    guard q.any(["level", "protection level", "how protected", "how much protection"]) || (named != nil && q.any(["protection", "switch", "use", "set", "go to", "change to", "turn on"]))
+    else { return nil }
+    let current = protectionLevel()
+    let name = PROTECTION_LEVELS.first { $0.id == current }?.title
+    var actions: [[String: Any]] = []
+    for l in PROTECTION_LEVELS where l.id != current && (named == nil || named?.id == l.id) {
+        actions.append(act("Switch to \(l.title)", "level", ["level": l.id], command: "bastion protect \(l.id)"))
+    }
+    let now = name.map { "You're on \($0)." } ?? (current == "off" ? "Protection is off: nothing is watching this Mac." : "Your protection is a custom mix.")
+    if let named, named.id == current { return reply("level", "You're already on \(named.title).", tone: "good", points: [named.summary]) }
+    return reply("level", now + (named.map { " \($0.title): \($0.summary)" } ?? ""),
+                 points: named == nil ? PROTECTION_LEVELS.map { "\($0.title): \($0.summary)" } : [], actions: actions,
+                 suggest: ["What needs me?", "Am I safe?"])
 }
 
 // MARK: The bastion command in a terminal

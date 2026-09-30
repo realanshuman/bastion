@@ -100,7 +100,7 @@ struct GuidePage: View {
                            why: "Finds an infection before anyone runs it.",
                            action: (store.busy.contains("scan") ? "Scanning" : "Scan now", { store.scan() }))
                 DocFeature(icon: "clock", title: "Scheduled scan", state: onOff(p["scheduled_scan"]),
-                           what: "Runs the same scan when you log in and every 6 hours.",
+                           what: "Runs the same scan when you log in and then \(store.scanEveryHours == 1 ? "every hour" : store.scanEveryHours == 24 ? "once a day" : "every \(store.scanEveryHours) hours"). You choose how often on the Protection page.",
                            why: "New infections don't wait for you to remember to check.",
                            action: p["scheduled_scan"] as? Bool == true ? nil : ("Turn on", { store.setFeature("scheduled_scan", title: "scheduled scan", on: true) }))
                 DocFeature(icon: "bolt", title: "Real-time watcher", state: onOff(p["watcher"]),
@@ -115,7 +115,7 @@ struct GuidePage: View {
                            state: (store.status["osv"] as? Bool == true ? "Online check on" : "Online check off", store.status["osv"] as? Bool == true ? DT.green : DT.dim),
                            what: "Reads the install scripts of your packages and where your lockfile downloads them from. If you turn it on, it also compares your exact versions with osv.dev's list of malicious packages.",
                            why: "Catches a bad npm package before it runs on your Mac.",
-                           action: ("Settings", { Router.shared.go(.settings) }))
+                           action: ("Protection", { Router.shared.go(.protection) }))
             }
         }
     }
@@ -159,7 +159,7 @@ struct GuidePage: View {
                            state: (level == "contain" ? "Contain" : level == "observe" ? "Report only" : "Off", level == "contain" ? DT.green : DT.dim),
                            what: "Bastion investigates by itself: which commit brought the malware in, whether it ran, and which branches carry it. In Contain mode it also removes injected code when it can prove the clean version, stops malware processes, quarantines leftovers and blocks attacker addresses.",
                            why: "The urgent part is handled while you're busy, and every change can be undone.",
-                           action: ("Settings", { Router.shared.go(.settings) }))
+                           action: ("Protection", { Router.shared.go(.protection) }))
                 DocFeature(icon: "exclamationmark.shield", title: "Needs you",
                            state: (n == 0 ? "Nothing right now" : "\(n) to do", n == 0 ? DT.green : DT.orange),
                            what: "One list of everything left for you. Each item says how dangerous it is right now, shows the proof (the exact line and column) and puts the fix on a button.",
@@ -168,12 +168,12 @@ struct GuidePage: View {
                 DocFeature(icon: "doc.text", title: "Incidents",
                            what: "A short report for each attack: what happened, whether it ran on this Mac, what Bastion did, and what's left. Items tick themselves off when Bastion sees them fixed.",
                            why: "A clear record for you and your team, without digging through logs.",
-                           action: ("Open", { Router.shared.go(.incidents) }))
+                           action: ("Open", { Router.shared.openHistory("incidents") }))
                 DocFeature(icon: "archivebox", title: "Quarantine",
                            state: store.quarantine.isEmpty ? nil : ("\(store.quarantine.count) item\(store.quarantine.count == 1 ? "" : "s")", DT.orange),
                            what: "Where known-malicious files go. Nothing is deleted.",
                            why: "If Bastion ever gets something wrong, you can put it back in one click.",
-                           action: ("Open", { Router.shared.go(.quarantine) }))
+                           action: ("Open", { Router.shared.openHistory("quarantine") }))
                 DocFeature(icon: "arrow.uturn.backward", title: "Undo",
                            what: "Every file Bastion cleans keeps a copy of the version it replaced.",
                            why: "No change is permanent unless you want it to be.")
@@ -185,11 +185,19 @@ struct GuidePage: View {
         DocSection(id: "everyday", title: "Everyday use", lead: "Where to look, and the quickest way to do things.") {
             DocList {
                 DocFeature(icon: "house", title: "Home",
-                           what: "Says in one sentence how things stand, then shows what needs you, recent activity and your protection.",
+                           what: "Says in one sentence how things stand, then shows what needs you, recent activity and your protection level.",
                            why: "One glance tells you whether you need to do anything.",
                            action: ("Open", { Router.shared.go(.home) }))
+                DocFeature(icon: "checkmark.shield", title: "Protection levels", state: (levelWord(store.level), ["recommended", "maximum"].contains(store.level) ? DT.green : DT.dim),
+                           what: "Basic watches and warns. Recommended also stops malware before it can run or spread. Maximum adds the online check and locks down AI agents. Every part stays yours to change on the Protection page.",
+                           why: "One choice sets everything, and you can still fine-tune any part.",
+                           action: ("Open", { Router.shared.go(.protection) }))
+                DocFeature(icon: "clock.arrow.circlepath", title: "History",
+                           what: "Everything Bastion did, the attacks it handled and what it locked away, with a count of the last 7 days.",
+                           why: "Proof that it's working, and a record for when you need one.",
+                           action: ("Open", { Router.shared.go(.history) }))
                 DocFeature(icon: "shield.lefthalf.filled", title: "Menu bar",
-                           what: "The shield in your menu bar shows the same status: all clear, something to clean up, or act now. Click it for Scan now and every protection switch.",
+                           what: "The shield in your menu bar shows the same status: all clear, something to clean up, or act now. Click it for Scan now, your protection level and recent activity.",
                            why: "You see trouble without opening the app.")
                 DocFeature(icon: "bell", title: "Notifications",
                            what: "A Mac notification when Bastion stops, quarantines or finds something.",
@@ -217,7 +225,7 @@ struct GuidePage: View {
                            why: "Cuts malware off from the server it reports to.")
                 DocFeature(icon: "eye.slash", title: "Ignore list", what: "Docs and tests that only mention a malware signature.",
                            why: "No false alarms for files that are just talking about malware.",
-                           action: ("Settings", { Router.shared.go(.settings) }))
+                           action: ("Settings", { UserDefaults.standard.set("advanced", forKey: "settingsTab"); Router.shared.go(.settings) }))
             }
         }
     }

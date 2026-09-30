@@ -71,6 +71,7 @@ final class GuardModel: ObservableObject {
     @Published var autonomy = "contain"
     @Published var state = "all_clear"          // act_now · clean_up · all_clear (same answer as the window)
     @Published var needsYou = 0
+    @Published var level = "custom"             // basic · recommended · maximum · custom · off (bastion status)
     @Published var engineOK = true              // false once the engine is known to be missing: never read that as "clean"
     @Published var checked = "recent"           // never · stale · recent (bastion status)
     @Published var scanAgeDays = 0
@@ -82,7 +83,7 @@ final class GuardModel: ObservableObject {
 
     let dir = HOME_DIR + "/.security-guard"
     let home = HOME_DIR
-    let version = "5.1.0"
+    let version = "5.2.0"
     private var statsLoaded = false
     var cli: String { "\(dir)/bin/bastion" }
 
@@ -159,6 +160,7 @@ final class GuardModel: ObservableObject {
             let level = cs?["autonomy"] as? String ?? "contain"
             let st = cs?["state"] as? String ?? "all_clear", ny = cs?["needs_you"] as? Int ?? 0
             let found = cs != nil, chk = cs?["checked"] as? String ?? "recent", ageDays = (cs?["last_scan_age_hours"] as? Int ?? 0) / 24
+            let lvl = cs?["level"] as? String ?? "custom"
             if let n = (cs?["active_threats"] as? [Any])?.count { active = n }   // live loaders, C2 links, unresolved scan findings
             else {
                 if liveLoader { active += 1 }
@@ -176,7 +178,7 @@ final class GuardModel: ObservableObject {
                     self.incidentId = incId; self.incidentStatus = incStatus; self.incidentSummary = incSummary; self.incidentTodos = incTodos
                     self.autonomy = level
                     self.state = st; self.needsYou = ny
-                    self.engineOK = found || !self.bootstrapDone; self.checked = chk; self.scanAgeDays = ageDays
+                    self.engineOK = found || !self.bootstrapDone; self.checked = chk; self.scanAgeDays = ageDays; self.level = lvl
                 }
             }
         }
@@ -228,44 +230,7 @@ final class GuardModel: ObservableObject {
         }
     }
 
-    // Toggles are OPTIMISTIC: flip the UI instantly, run the (fast) command, then confirm with a fast refresh.
-    private func act(_ key: String, _ cmd: String) {
-        withAnimation { applying = key }
-        Task.detached(priority: .userInitiated) {
-            _ = runShell(cmd)
-            await MainActor.run { withAnimation { self.applying = "" }; self.refreshFast() }
-        }
-    }
-    func toggleWatcher(_ on: Bool) {
-        withAnimation { watcherOn = on }   // optimistic
-        act("watcher", on ? "bash '\(dir)/install.sh' --watch"
-                          : "launchctl unload ~/Library/LaunchAgents/com.bastion.guard.watcher.plist 2>/dev/null; rm -f ~/Library/LaunchAgents/com.bastion.guard.watcher.plist")
-    }
-    func toggleSchedule(_ on: Bool) {
-        withAnimation { scheduleOn = on }  // optimistic
-        act("schedule", on ? "bash '\(dir)/install.sh' --scan"
-                           : "launchctl unload ~/Library/LaunchAgents/com.bastion.guard.scan.plist 2>/dev/null; rm -f ~/Library/LaunchAgents/com.bastion.guard.scan.plist")
-    }
-    func toggleExecutionGuard(_ on: Bool) {
-        withAnimation { executionGuardOn = on }  // optimistic
-        act("guard-exec", on ? "bash '\(dir)/harden.sh' install" : "bash '\(dir)/harden.sh' remove")
-    }
-    func installGitGuard() {
-        withAnimation { applying = "guard" }
-        let dir = self.dir, home = self.home, cli = self.cli
-        Task.detached(priority: .userInitiated) {
-            if FileManager.default.isExecutableFile(atPath: cli) { _ = runTool(cli, ["enable", "git-guard", "--json"]) }
-            else {   // same rule as the CLI: only repos with no hook setup of their own
-                _ = runShell("while IFS= read -r g; do r=$(dirname \"$g\"); grep -qi hookspath \"$r/.git/config\" 2>/dev/null && continue; [ -e \"$r/.git/hooks/pre-push\" ] && continue; cp '\(dir)/git-guard' \"$r/.git/hooks/pre-push\" 2>/dev/null && chmod +x \"$r/.git/hooks/pre-push\" 2>/dev/null; done < <(find '\(home)' -maxdepth 4 -type d -name .git -not -path '*/node_modules/*' -not -path '*/Library/*' 2>/dev/null)")
-            }
-            await MainActor.run { withAnimation { self.applying = "" }; self.loadStats(force: true) }
-        }
-    }
     func reveal(_ path: String) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
-    func setAutonomy(_ on: Bool) {
-        withAnimation { autonomy = on ? "contain" : "observe" }   // optimistic
-        act("autonomy", "'\(cli)' autonomy \(on ? "contain" : "observe --yes")")
-    }
     /// Copies the one-liner that registers Bastion as an MCP server in Claude Code.
     func copyAgentSetup() {
         NSPasteboard.general.clearContents()
@@ -381,8 +346,9 @@ struct PanelView: View {
         .onDisappear { ticker?.invalidate(); ticker = nil }
     }
 
-    private func openMain(_ pane: Pane, incident: String? = nil, needsYou: Bool = false, ask: Bool = false) {
-        if ask { Router.shared.askHome() }
+    private func openMain(_ pane: Pane, incident: String? = nil, needsYou: Bool = false, ask: Bool = false, history: String? = nil) {
+        if let history { Router.shared.openHistory(history) }
+        else if ask { Router.shared.askHome() }
         else if needsYou { Router.shared.openNeedsYou() } else if let incident { Router.shared.open(incident: incident) } else { Router.shared.go(pane) }
         openWindow(id: "main")
         NSApp.activate(ignoringOtherApps: true)
@@ -433,7 +399,7 @@ struct PanelView: View {
     }
 
     private var incident: some View {
-        Button { openMain(.incidents, needsYou: true) } label: {
+        Button { openMain(.needs, needsYou: true) } label: {
             HStack(spacing: 10) {
                 DangerIcon(danger: model.state == "act_now" ? "now" : "dormant", size: 26)
                 VStack(alignment: .leading, spacing: 2) {
@@ -494,51 +460,37 @@ struct PanelView: View {
         }.buttonStyle(PrimaryButton(large: true)).disabled(model.scanning)
     }
 
+    /// The level in one row; the Protection page has the parts
     private var protection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Protection").font(uiFont(12, .medium)).foregroundStyle(DT.dim)
-            VStack(spacing: 0) {
-                toggleRow("Real-time watcher", on: model.watcherOn, busy: model.applying == "watcher") { model.toggleWatcher($0) }
-                divider
-                toggleRow("Scheduled scan · 6h", on: model.scheduleOn, busy: model.applying == "schedule") { model.toggleSchedule($0) }
-                divider
-                toggleRow("Execution guard", on: model.executionGuardOn, busy: model.applying == "guard-exec") { model.toggleExecutionGuard($0) }
-                divider
-                toggleRow("Auto-respond", on: model.autonomy == "contain", busy: model.applying == "autonomy") { model.setAutonomy($0) }
-                if model.gitReposUnprotected > 0 {
-                    divider
-                    Button { model.installGitGuard() } label: {
-                        HStack {
-                            Text("Guard \(model.gitReposUnprotected) repo\(model.gitReposUnprotected == 1 ? "" : "s") on push").font(uiFont(13)).foregroundStyle(DT.orange)
-                            Spacer()
-                            if model.applying == "guard" { ProgressView().controlSize(.small).scaleEffect(0.6) }
-                            else { Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.faint) }
-                        }.padding(.horizontal, 12).frame(height: 36).contentShape(Rectangle())
-                    }.buttonStyle(.plain).disabled(model.applying == "guard")
+        let strong = model.level == "recommended" || model.level == "maximum"
+        return Button { openMain(.protection) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: model.level == "off" ? "shield.slash.fill" : "checkmark.shield.fill").font(.system(size: 13))
+                    .foregroundStyle(model.level == "off" ? DT.red : strong ? DT.green : DT.dim).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Protection").font(uiFont(12)).foregroundStyle(DT.dim)
+                    Text(levelWord(model.level)).font(uiFont(13, .semibold)).foregroundStyle(DT.text)
                 }
+                Spacer()
+                if !strong { Text("Raise").font(uiFont(12, .medium)).foregroundStyle(DT.accent) }
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DT.faint)
             }
+            .padding(.horizontal, 12).frame(height: 48).contentShape(Rectangle())
             .background(DT.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DT.border))
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Protection: \(levelWord(model.level)). Open the Protection page.")
     }
 
     private var divider: some View { Rectangle().fill(DT.hairline).frame(height: 1).padding(.leading, 12) }
-
-    private func toggleRow(_ title: String, on: Bool, busy: Bool, _ set: @escaping (Bool) -> Void) -> some View {
-        HStack {
-            Text(title).font(uiFont(13)).foregroundStyle(DT.text)
-            Spacer()
-            if busy { ProgressView().controlSize(.small).scaleEffect(0.6) }
-            Toggle(title, isOn: Binding(get: { on }, set: set)).labelsHidden().toggleStyle(ThemeSwitch())
-        }.padding(.horizontal, 12).frame(height: 36)
-    }
 
     private var recent: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Recent activity").font(uiFont(12, .medium)).foregroundStyle(DT.dim)
                 Spacer()
-                LinkButton(title: "All") { openMain(.activity) }
+                LinkButton(title: "All") { openMain(.history, history: "activity") }
             }
             VStack(alignment: .leading, spacing: 0) {
                 if model.events.isEmpty {

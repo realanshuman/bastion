@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh: set up Bastion background agents for the current user (fixed labels).
 # Usage:  install.sh            # scheduled scan + live watcher
-#         install.sh --scan     # scheduled 6h scan only
+#         install.sh --scan     # scheduled scan only (every 6 hours, or what `bastion schedule` set)
 #         install.sh --watch    # live watcher only
 set -uo pipefail
 DEST="$HOME/.security-guard"
@@ -32,6 +32,11 @@ elif [ ! -x "$DEST/bin/bastion" ] && [ -f "$SELF/cli/main.swift" ] && command -v
   swiftc -O "$SELF"/cli/*.swift -o "$DEST/bin/bastion" 2>/dev/null || echo "note: couldn't compile the bastion CLI (the app and background agents still work)"
 fi
 
+LAUNCHCTL="${BASTION_LAUNCHCTL:-launchctl}"
+# how often the scheduled scan runs: 1, 6 or 24 hours (bastion schedule), 6 unless settings.json says otherwise
+EVERY=$(sed -n 's/.*"scan_every_hours"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$DEST/settings.json" 2>/dev/null | head -1)
+case "$EVERY" in 1|6|24) ;; *) EVERY=6;; esac
+
 want_scan=1; want_watch=1
 case "${1:-}" in --scan) want_watch=0;; --watch) want_scan=0;; esac
 
@@ -53,15 +58,15 @@ PL
 loaded=""
 if [ "$want_scan" = 1 ]; then
   plist "$SCAN_LABEL" "guard.sh" "  <key>RunAtLoad</key><true/>
-  <key>StartInterval</key><integer>21600</integer>" "<string>$HOME</string>"
-  launchctl unload "$LA/$SCAN_LABEL.plist" 2>/dev/null || true
-  launchctl load "$LA/$SCAN_LABEL.plist" && loaded="$loaded scheduled-scan"
+  <key>StartInterval</key><integer>$((EVERY * 3600))</integer>" "<string>$HOME</string>"
+  "$LAUNCHCTL" unload "$LA/$SCAN_LABEL.plist" 2>/dev/null || true
+  "$LAUNCHCTL" load "$LA/$SCAN_LABEL.plist" && loaded="$loaded scheduled-scan"
 fi
 if [ "$want_watch" = 1 ]; then
   plist "$WATCH_LABEL" "watcher.sh" "  <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>10</integer>" ""
-  launchctl unload "$LA/$WATCH_LABEL.plist" 2>/dev/null || true
-  launchctl load "$LA/$WATCH_LABEL.plist" && loaded="$loaded live-watcher"
+  "$LAUNCHCTL" unload "$LA/$WATCH_LABEL.plist" 2>/dev/null || true
+  "$LAUNCHCTL" load "$LA/$WATCH_LABEL.plist" && loaded="$loaded live-watcher"
 fi
 echo "Bastion agents active:$loaded"
 [ -x "$DEST/bin/bastion" ] && echo "CLI: $DEST/bin/bastion   ·   use it as plain \`bastion\`: $DEST/bin/bastion path install   ·   connect an AI agent: $DEST/bin/bastion connect"

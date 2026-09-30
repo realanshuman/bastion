@@ -60,16 +60,16 @@ git clone https://github.com/realanshuman/bastion.git
 cd bastion
 bash build.sh      # builds Bastion.app, the bastion CLI and a .dmg
 bash install.sh    # turns on the background protection
+bash tests/run.sh  # every test suite, each in a throwaway home folder (never touches your own setup)
 ```
 
 **Where to find it afterwards**
 
 - The 🛡 shield sits in your menu bar, at the top-right of the screen. Click it for a quick look; click
   **Open** for the full window.
-- The `bastion` command lives at `~/.security-guard/bin/bastion`. To type just `bastion`, add it to your PATH once:
-  ```bash
-  echo 'export PATH="$HOME/.security-guard/bin:$PATH"' >> ~/.zshrc
-  ```
+- The `bastion` command lives at `~/.security-guard/bin/bastion`. To type just `bastion`, click **Install
+  command-line tool** in Settings (or run `~/.security-guard/bin/bastion path install`). It shows the exact change
+  first and asks.
 
 ## How Bastion responds
 
@@ -98,20 +98,29 @@ unsaved edits in it. Those become to-dos. Choose how much it does on its own in 
 ## The app
 
 Bastion looks and works like a browser: a sidebar with back, forward and **Search or ask** (⌘K), and the page
-beside it. Light, dark, or the same as your Mac.
+beside it. Light, dark, or the same as your Mac. Each page answers one question.
 
-- **Home** is the agent. It says how things stand in one sentence ("Your code is clean", "2 old branches carry
-  hidden malware"), then lets you ask in plain words: *Is my-app safe?*, *What needs me?*, *What happened
-  today?*, *What does dormant mean?* Answers come with the next step as a button. Below that: a three-step
-  **Get started** guide until it's done, then what needs you, recent activity and protection.
-- **Incidents → Needs you** is the live list: every threat, infected branch and open step, grouped by repo, each
-  with how dangerous it is right now, the proof and a fix button. Anything that changes GitHub asks first.
-- **Incidents → All incidents**: each one reads as a short story. In short, what's left for you, what Bastion did,
-  the evidence and the timeline.
+- **Home**: how am I doing? One sentence ("Your code is clean", "2 old branches carry hidden malware"), then a box
+  for plain questions: *Is my-app safe?*, *What needs me?*, *What does dormant mean?* Answers come with the next
+  step as a button. Below that: a three-step **Get started** guide until it's done, what needs you, recent activity
+  and your protection level.
+- **Needs you**: what do I have to do? The live list: every threat, infected branch and open step, grouped by repo,
+  each with how dangerous it is right now, the proof and a fix button. Anything that changes GitHub asks first.
+- **Protection**: how much is Bastion doing for me? Pick a level:
+  - **Basic** watches this Mac and checks your code on a schedule. Nothing changes in your terminal or your repos.
+  - **Recommended** also stops malware before it can run or spread, and cleans up what it can prove, with undo.
+  - **Maximum** also checks your packages against osv.dev's list of known malware and hard-guards your AI agents.
+
+  Every part stays yours: the watcher, the scheduled scan and how often it runs (every hour, 6 hours or day), the
+  execution guard, the push guard, auto-respond, the online check and your AI agents, each with one plain sentence.
+  Your own mix shows as *Custom*. Going down a level, or turning on anything that sends data, asks first.
 - **Repositories**: every git repo as a card (or a list) with its health, branch and push guard. Check one, hunt
   its history, check its dependencies or add the Team PR guard from the **⋯** menu.
-- **Activity**, **Quarantine**, **AI agents** (connect in one click, add the hard-guard) and **Settings**
-  (appearance, auto-respond, protections, the online malware check, your lists).
+- **AI agents**: connect Claude Code, Cursor or Codex in one click, and add the hard-guard.
+- **History**: what happened? Everything Bastion did, each incident as a short story (what happened, what's left
+  for you, what Bastion did, the evidence), and what it quarantined, with a count of the last 7 days.
+- **Settings**: appearance, opening at login and the command line. **Advanced** has your allow, block and ignore
+  lists, which most people never need.
 - **How it works**: a guide inside the app that explains every feature in plain words, what it does and why it
   helps you, with each one's live status and a button to turn it on.
 - **One status everywhere**: *All clear*, *N to clean up* (nothing is running) or *Act now*, the same in the
@@ -270,6 +279,8 @@ bastion activity                # what Bastion caught or changed recently
 bastion enable watcher          # or schedule, exec-guard, git-guard, auto-respond; "disable" turns one off
 bastion allow add api.mycompany.com   # trust your own server
 bastion path                    # is the bastion command set up for new terminal windows? (install · remove)
+bastion protect recommended     # basic · recommended · maximum (going down, or sending data, asks first)
+bastion schedule 1h             # how often the scheduled scan runs: 1h · 6h · 24h
 ```
 
 Add `--json` to any command for machine-readable output. Exit codes: `0` all good · `2` threats found ·

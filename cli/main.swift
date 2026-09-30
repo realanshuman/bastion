@@ -143,7 +143,9 @@ bastion \(VERSION): a guard against supply-chain malware in JavaScript projects
   bastion repos                   your git repos: branch, push guard, open findings
   bastion lists                   allowlist, blocklist and ignore list
   bastion allow|block|ignore add|remove <value>
+  bastion protect [level]         Basic, Recommended or Maximum: what each one changes, and a switch between them
   bastion enable|disable watcher|schedule|exec-guard|git-guard|auto-respond
+  bastion schedule [1h|6h|24h]    how often the scheduled scan runs (at login, and then this often)
   bastion respond [dirs…]         investigate and contain an attack, then write an incident report
                                   (--plan: investigate only, change nothing)
   bastion incidents               incident history  ·  incident [id] shows the report  ·  incident resolve [id]
@@ -298,7 +300,7 @@ do {
 
     case "activity":
         let events = activity(limit: limit)
-        output(["events": events]) {
+        output(["events": events, "week": weekSummary()]) {
             if events.isEmpty { print(faint("No activity yet. All quiet.")) }
             for e in events { print(faint(e["time"] as? String ?? "") + "  " + (e["message"] as? String ?? "")) }
         }
@@ -598,6 +600,33 @@ do {
         output(r, code: r["ok"] as? Bool ?? false ? 0 : 1) {
             let f = r["failures"] as? [String] ?? []
             print(f.isEmpty ? good("✓ detection rules pass") : bad("✗ \(f.count) rule check(s) failed:\n  ") + f.joined(separator: "\n  "))
+        }
+
+    case "protect":
+        if let id = rest.first {
+            let r = try applyLevel(id.lowercased())
+            output(r, code: r["ok"] as? Bool == false ? 1 : 0) { print((r["ok"] as? Bool == true ? good("✓ ") : warn("! ")) + (r["message"] as? String ?? "")) }
+        }
+        let r = levelsReport()
+        output(r) {
+            let current = r["level"] as? String ?? "custom"
+            print(strong("protection: ") + (current == "custom" ? "custom (your own mix)" : current))
+            for l in r["levels"] as? [[String: Any]] ?? [] {
+                let id = l["id"] as? String ?? "", steps = l["changes"] as? [[String: Any]] ?? []
+                print("\n" + (l["current"] as? Bool == true ? good("● ") : "○ ") + strong(l["title"] as? String ?? "") + faint("  bastion protect \(id)"))
+                print("  " + (l["summary"] as? String ?? ""))
+                if !steps.isEmpty && l["current"] as? Bool != true { print(faint("  would: " + steps.compactMap { $0["title"] as? String }.joined(separator: " · "))) }
+            }
+        }
+
+    case "schedule":
+        if let every = rest.first {
+            let r = try setScanInterval(every)
+            output(r) { print(good("✓ ") + (r["message"] as? String ?? "")) }
+        }
+        let h = scanEveryHours()
+        output(["scan_every_hours": h, "running": agentLoaded(SCAN_LABEL)]) {
+            print("scheduled scan: at login and " + (h == 1 ? "every hour" : h == 24 ? "once a day" : "every \(h) hours") + (agentLoaded(SCAN_LABEL) ? "" : faint("  (off: bastion enable schedule)")))
         }
 
     case "path":

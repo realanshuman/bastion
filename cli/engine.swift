@@ -2,7 +2,7 @@
 // Agents can inspect and strengthen protection. Anything that lowers it needs a person at a terminal.
 import Foundation
 
-let VERSION = "5.1.0"
+let VERSION = "5.2.0"
 let HOME: String = {
     if let h = ProcessInfo.processInfo.environment["HOME"], !h.isEmpty { return h }
     return NSHomeDirectory()
@@ -11,6 +11,8 @@ let ENGINE = HOME + "/.security-guard"
 let LAUNCH_AGENTS = HOME + "/Library/LaunchAgents"
 let WATCH_LABEL = "com.bastion.guard.watcher"
 let SCAN_LABEL = "com.bastion.guard.scan"
+/// launchctl, or BASTION_LAUNCHCTL: tests use a stand-in so they never load or unload this Mac's real agents
+let LAUNCHCTL = ProcessInfo.processInfo.environment["BASTION_LAUNCHCTL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/launchctl"
 let fm = FileManager.default
 
 struct Failure: Error { let message: String; init(_ m: String) { message = m } }
@@ -391,7 +393,7 @@ func liveC2() -> [[String: Any]] {
     return hits
 }
 
-func agentLoaded(_ label: String) -> Bool { run("/bin/launchctl", ["list"], timeout: 10).out.contains(label) }
+func agentLoaded(_ label: String) -> Bool { run(LAUNCHCTL, ["list"], timeout: 10).out.contains(label) }
 func execGuardOn() -> Bool { readText(HOME + "/.zshrc").contains("# >>> bastion execution guard >>>") }
 
 // MARK: - Scan logs, quarantine, activity
@@ -507,7 +509,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     if includeRepos {
         DispatchQueue.global().async(group: group) { rs.repos = repoRoots(); rs.states = rs.repos.map(gitGuardState) }
     }
-    let agents = run("/bin/launchctl", ["list"], timeout: 10).out
+    let agents = run(LAUNCHCTL, ["list"], timeout: 10).out
     let loaders = liveLoaders(), c2 = liveC2()
     let last = scanLogPaths().last.map(parseScanLog)
     let quarantine = quarantineItems()
@@ -526,7 +528,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     let attention = needsYou(threats: threats, detail: false)
 
     let protection: [String: Any] = ["watcher": agents.contains(WATCH_LABEL), "scheduled_scan": agents.contains(SCAN_LABEL),
-                                     "exec_guard": execGuardOn()]
+                                     "exec_guard": execGuardOn(), "scan_every_hours": scanEveryHours()]
     let setup = nextSteps().filter { $0["optional"] as? Bool != true }
     var out: [String: Any] = ["version": VERSION, "engine": ENGINE, "posture": threats.isEmpty ? "protected" : "at_risk", "responding": responseRunning(),
                               "state": overallState(attention), "needs_you": attention.count,
@@ -559,6 +561,7 @@ func statusReport(includeRepos: Bool) -> [String: Any] {
     else if let age, age > 72 { summary += " The last scan was \(Int(age / 24)) days ago." }
     out["autonomy"] = autonomy()
     out["osv"] = osvEnabled()
+    out["level"] = protectionLevel(protectionNow(loaded: agents))   // basic · recommended · maximum · custom · off
     out["command_line"] = commandLineStatus()   // is `bastion` set up for new terminal windows
     if let i = currentIncident() {
         let brief = incidentBrief(i)
@@ -734,7 +737,7 @@ func disable(_ f: Feature) throws -> [String: Any] {
     case .watcher, .schedule:
         let label = f == .watcher ? WATCH_LABEL : SCAN_LABEL
         let plist = LAUNCH_AGENTS + "/\(label).plist"
-        _ = run("/bin/launchctl", ["unload", plist], timeout: 20)
+        _ = run(LAUNCHCTL, ["unload", plist], timeout: 20)
         try? fm.removeItem(atPath: plist)
         if f == .watcher { _ = run("/usr/bin/pkill", ["-f", engine("watcher.sh")], timeout: 10) }
     case .execGuard:
@@ -847,7 +850,7 @@ func bootstrap() -> [String: Any] {
     for f in written where f.hasSuffix(".sh") || f.hasSuffix("git-guard") || f.contains("/shims/") || f.hasSuffix("/bin/bastion") { chmod(f, 0o755) }
     // a running watcher keeps old code until restarted
     if fm.fileExists(atPath: LAUNCH_AGENTS + "/\(WATCH_LABEL).plist") && agentLoaded(WATCH_LABEL) {
-        _ = run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(WATCH_LABEL)"], timeout: 20)
+        _ = run(LAUNCHCTL, ["kickstart", "-k", "gui/\(getuid())/\(WATCH_LABEL)"], timeout: 20)
     }
     return ["ok": true, "action": have.isEmpty ? "installed" : "updated", "from": have, "to": want, "engine": ENGINE]
 }
